@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>서울 지하철 실시간 혼잡 예측</title>
+<link rel="stylesheet" href="/static/vendor/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2300A84D'/><rect x='9' y='7' width='14' height='14' rx='3' fill='%23fff'/><circle cx='12' cy='24' r='2' fill='%23fff'/><circle cx='20' cy='24' r='2' fill='%23fff'/></svg>">
+</head>
+<body>
+
+<a class="skip-link" href="#stationPanel">본문으로 건너뛰기</a>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__text">
+        <h1>서울 지하철 <em>실시간 혼잡 예측</em></h1>
+        <p class="brand__sub">타는 열차의 혼잡도를 미리 보고, 이번 열차와 다음 열차를 비교합니다</p>
+      </span>
+    </div>
+
+    <div class="statusbar" role="status" aria-live="polite">
+      <span class="tag tag--source" id="sourceTag" hidden></span>
+      <span class="tag tag--estimate" id="estimateTag" hidden>추정치 기반</span>
+      <span class="tag tag--muted" id="fetchedTag" hidden></span>
+
+      <div class="refresh">
+        <button type="button" class="refresh__btn" id="refreshToggle"
+                aria-label="자동 갱신 일시정지" aria-pressed="true">
+          <svg class="refresh__ring" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
+            <circle class="refresh__track" cx="18" cy="18" r="15"></circle>
+            <circle class="refresh__progress" id="refreshProgress" cx="18" cy="18" r="15"></circle>
+          </svg>
+          <span class="refresh__glyph" id="refreshGlyph" aria-hidden="true"></span>
+        </button>
+        <span class="refresh__label">
+          <b id="refreshCount">30</b>초 후 갱신
+          <span class="refresh__hint" id="refreshHint">30초 주기</span>
+        </span>
+        <button type="button" class="btn btn--ghost btn--sm" id="refreshNow">지금 갱신</button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="linebar" aria-label="노선 선택">
+    <div class="linebar__scroll" id="lineChips" role="tablist" aria-label="노선 목록">
+      <span class="linebar__loading">노선을 불러오는 중…</span>
+    </div>
+  </nav>
+</header>
+
+<div class="notices" id="notices" aria-live="polite"></div>
+
+<main class="layout">
+
+  <!-- ── 1. 실시간 노선도 ─────────────────────────────── -->
+  <section class="panel panel--map" aria-labelledby="mapTitle">
+    <div class="panel__head">
+      <h2 class="panel__title" id="mapTitle">
+        <span class="panel__eyebrow">01 · LIVE MAP</span>
+        실시간 노선도
+      </h2>
+      <div class="panel__tools">
+        <label class="field">
+          <span class="field__label" for="stationSelect">역 선택</span>
+          <select id="stationSelect" class="select">
+            <option value="">역을 불러오는 중…</option>
+          </select>
+        </label>
+        <p class="panel__note" id="mapCount">—</p>
+      </div>
+    </div>
+
+    <div class="map-wrap">
+      <div id="map" role="application" aria-label="서울 지하철 실좌표 노선도. 역 마커를 선택하면 혼잡도 예측을 봅니다."></div>
+
+      <div class="map-overlay map-overlay--empty" id="mapEmpty" hidden>
+        <strong>표시할 열차가 없습니다</strong>
+        <span id="mapEmptyReason">실시간 열차 위치가 비어 있습니다. 노선과 역은 정상 표시됩니다.</span>
+      </div>
+
+      <div class="map-legend" id="mapLegend">
+        <p class="map-legend__title">열차 색 = 그 열차가 선 <b>역·시간대</b>의 혼잡도<br>
+          <span class="map-legend__sub">열차별 예측이 아닙니다. 역을 클릭하면 이번/다음 열차 예측이 나옵니다.</span></p>
+        <ul class="grade-legend">
+          <li><i class="dot dot--여유"></i>여유 <span>&lt;80%</span></li>
+          <li><i class="dot dot--보통"></i>보통 <span>&lt;130%</span></li>
+          <li><i class="dot dot--혼잡"></i>혼잡 <span>&lt;150%</span></li>
+          <li><i class="dot dot--매우혼잡"></i>매우혼잡 <span>≥150%</span></li>
+        </ul>
+        <p class="map-legend__foot">좌표는 실제 위경도 · 배경 지도 OpenStreetMap</p>
+      </div>
+    </div>
+
+    <div class="panel__error" id="mapError" hidden></div>
+  </section>
+
+  <!-- ── 2·3. 역 선택 패널 + 이번 vs 다음 ───────────────── -->
+  <section class="panel panel--rail" id="stationPanel" aria-labelledby="stationTitle" tabindex="-1">
+    <div class="panel__head">
+      <h2 class="panel__title" id="stationTitle">
+        <span class="panel__eyebrow">02 · ARRIVING TRAIN</span>
+        역 선택 · 이번 vs 다음
+      </h2>
+    </div>
+    <div class="panel__body" id="stationBody">
+      <div class="empty">
+        <span class="empty__icon" aria-hidden="true">◎</span>
+        <strong>지도에서 역을 선택하세요</strong>
+        <span>선택한 역으로 오는 이번 열차와 다음 열차의 예상 혼잡도를 비교합니다.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 4. 착석 타이밍 타임라인 ────────────────────────── -->
+  <section class="panel panel--timeline" aria-labelledby="timelineTitle">
+    <div class="panel__head">
+      <h2 class="panel__title" id="timelineTitle">
+        <span class="panel__eyebrow">03 · SEAT TIMING</span>
+        착석 타이밍 타임라인
+      </h2>
+      <div class="panel__tools">
+        <label class="field">
+          <span class="field__label" for="destSelect">목적지</span>
+          <select id="destSelect" class="select">
+            <option value="">역을 먼저 선택하세요</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="panel__body" id="timelineBody">
+      <div class="empty">
+        <span class="empty__icon" aria-hidden="true">◷</span>
+        <strong>목적지를 고르면 착석 예상 구간을 계산합니다</strong>
+        <span>역을 선택하고 목적지를 지정하면, 어느 역쯤부터 앉을 확률이 올라가는지 보여줍니다.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 5. 혼잡 히트맵 ────────────────────────────────── -->
+  <section class="panel panel--heatmap" aria-labelledby="heatTitle">
+    <div class="panel__head">
+      <h2 class="panel__title" id="heatTitle">
+        <span class="panel__eyebrow">04 · HEATMAP</span>
+        시간대별 혼잡 히트맵
+      </h2>
+      <div class="panel__tools">
+        <label class="field">
+          <span class="field__label" for="dirSelect">방향</span>
+          <select id="dirSelect" class="select">
+            <option value="">양방향 평균</option>
+            <option value="상선">상선</option>
+            <option value="하선">하선</option>
+          </select>
+        </label>
+        <span class="chip chip--static" title="현재 데이터셋에는 평일 통계만 있습니다">평일 기준</span>
+      </div>
+    </div>
+    <div class="panel__body" id="heatBody">
+      <div class="skeleton skeleton--grid" aria-hidden="true"></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer__inner">
+    <p><b>데이터 출처</b> · 서울시 지하철 역사 마스터 / 승하차 인원 통계(서울열린데이터광장). 혼잡도는 승하차 통계로부터 <b>추정한 값</b>이며 공식 측정 혼잡도가 아닙니다.</p>
+    <p>혼잡도는 언제나 <b>정원 대비 백분율(%) 추정치</b>이며 탑승 인원수가 아닙니다. 학술·개인 실험용 화면입니다.</p>
+  </div>
+</footer>
+
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
