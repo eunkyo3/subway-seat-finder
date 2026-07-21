@@ -10,6 +10,9 @@ FastAPI + DuckDB + Leaflet · `docker compose up` 한 번으로 실행됩니다.
 ## 빠른 시작
 
 ```bash
+# 0) 인증키 준비 (아래 '인증키 설정' 참고)
+echo "발급받은_일반_인증키" > api-key.txt
+
 # 1) 배치 데이터 적재 (역 마스터 · 승하차 · 혼잡도)
 docker compose run --rm etl
 
@@ -35,13 +38,15 @@ uvicorn backend.app.main:app --reload              # 앱 실행
 
 서울 열린데이터광장은 **인증키가 두 종류**이고, 서로 호환되지 않습니다.
 
-| 종류 | 쓰는 곳 | 파일 | 상태 |
+| 종류 | 쓰는 곳 | 놓을 파일 | 필수 |
 |---|---|---|---|
-| **일반 인증키** | `openapi.seoul.go.kr:8088`<br>역 마스터·좌표·승하차 통계 | `api-key.txt` | ✅ 설정됨 |
-| **실시간 지하철 인증키** | `swopenapi.seoul.go.kr`<br>열차 위치·도착 | `realtime-api-key.txt` | ✅ 설정됨 |
+| **일반 인증키** | `openapi.seoul.go.kr:8088`<br>역 마스터·좌표·승하차 통계 | `api-key.txt` | ✅ 필수 |
+| **실시간 지하철 인증키** | `swopenapi.seoul.go.kr`<br>열차 위치·도착 | `realtime-api-key.txt` | ⬜ 선택 |
 
-두 파일 모두 `docker compose up` 시 자동으로 마운트됩니다. 키 파일이 없어도 앱은 기동하며,
-그때는 열차 위치만 비고 나머지(혼잡도·히트맵·역 정보)는 정상 동작합니다.
+> 두 파일 모두 **저장소에 없습니다**(`.gitignore`). 직접 발급받아 프로젝트 루트에 만드세요.
+> `docker compose up` 시 자동으로 마운트됩니다.
+
+실시간 키가 없어도 앱은 정상 기동합니다. 열차 위치만 비고 혼잡도·히트맵·역 정보는 모두 동작합니다.
 
 일반 인증키로 실시간 API를 호출하면 `ERROR-338: 해당 인증키로는 실시간 서비스를 사용할 수 없습니다` 가 뜹니다.
 
@@ -65,9 +70,12 @@ uvicorn backend.app.main:app --reload              # 앱 실행
 
 혼잡도 통계(OA-12928)는 **OpenAPI가 없고 파일 다운로드만** 제공됩니다. 로그인만 하면 인증키 없이 받을 수 있습니다.
 
+> 원본 파일은 용량 때문에 **저장소에 넣지 않았습니다**(`.gitignore`). 아래 링크에서 직접 받으세요.
+> 없어도 앱은 승하차 기반 추정치로 동작합니다.
+
 | 데이터 | 링크 | 두는 곳 |
 |---|---|---|
-| **지하철 혼잡도 (OA-12928)** | https://data.seoul.go.kr/dataList/OA-12928/F/1/datasetView.do | `data/raw/` ✅ 적재됨 |
+| **지하철 혼잡도 (OA-12928)** ⭐핵심 | https://data.seoul.go.kr/dataList/OA-12928/F/1/datasetView.do | `data/raw/` |
 | 역별 시간대별 승하차 (OA-12921) *선택* | https://data.seoul.go.kr/dataList/OA-12921/F/1/datasetView.do | `data/raw/` |
 
 파일을 `data/raw/` 에 넣고 배치를 다시 실행하면 됩니다.
@@ -138,7 +146,7 @@ python -m backend.app.etl.capture_snapshots --rounds 20 --interval 30
                                                        # 실시간 스냅샷 녹화 (실시간 키 필요)
 python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통계 오차 측정
 
-./.venv/Scripts/python.exe -m pytest                   # 테스트 (266개)
+./.venv/Scripts/python.exe -m pytest                   # 테스트 (269개)
 ```
 
 ### 시연 안전망
@@ -165,6 +173,10 @@ python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통
 대화형 문서: http://localhost:8000/docs
 
 `predict` 는 `at=2026-07-21T08:15:00` 으로 기준 시각을 지정할 수 있습니다 (재생·검증용).
+
+`direction` 을 생략하면 **가장 먼저 오는 열차의 방향**으로 후보를 좁히고 `directionInferred: true` 를 표기합니다. 이걸 안 하면 상행·하행을 섞어 비교해 **반대 방향으로 가는 열차**를 타라고 추천하게 됩니다.
+
+`heatmap` 은 노선 대표 `source` 와 함께 `stations[].source` 를 줍니다 (역마다 다를 수 있음).
 
 ---
 
@@ -249,7 +261,7 @@ backend/app/
 │   └── engine.py          예측 공식 · 이번/다음 비교
 └── routers/               stations · realtime · predict
 
-frontend/                  Leaflet 대시보드 (번들러 없음)
+frontend/                  Leaflet 대시보드 (번들러 없음, Leaflet은 vendor/에 내장)
 data/raw/                  ← 혼잡도 엑셀을 여기에
 data/snapshots/            ← 녹화된 실시간 스냅샷
 ```
@@ -265,9 +277,42 @@ data/snapshots/            ← 녹화된 실시간 스냅샷
   → 노선+이름 우선, 좌표가 가까울 때만 이름 단독 폴백.
 - `자양`(척추) = `뚝섬유원지`(좌표 소스) 처럼 대표명이 다른 역이 있습니다.
 - `인천2호선` 을 정규식으로 접으면 서울 `2호선` 이 됩니다. → 명시 매핑을 정규식보다 먼저 적용.
+- `'평일'` 에도 `'일'` 이 들어 있어, 부분일치로 요일을 판정하면 **일요일로 분류**됩니다.
+
+### 실시간 API의 함정 (실측)
+
+**위치와 도착이 같은 개념을 다른 필드명으로 줍니다.** 명세만 보고 통일하면 조용히 깨집니다.
+
+| 개념 | 위치 (`realtimePosition`) | 도착 (`realtimeStationArrival`) |
+|---|---|---|
+| 열차번호 | `trainNo` | `btrainNo` |
+| 종착역 | `statnTnm` (`'성수종착'`) | `bstatnNm` (`'성수'`) |
+| 급행 | `directAt` | `btrainSttus` (`'일반'`/`'급행'`) — `directAt` **없음** |
+| 방향 | 코드 `'0'`/`'1'` | 한글 `'상행'`/`'외선'` |
+
+→ 열차번호를 `btrainNo` 로 통일해 읽으면 **위치의 열차번호가 항상 빈 값**이 되고,
+배차간격·시발 감지가 통째로 죽습니다. 겉으로는 아무 오류도 안 납니다.
+
+**방향 어휘도 세 갈래입니다.** 실시간은 `상행`/코드 `0`, 혼잡도 통계는 `상선`,
+2호선은 `내선`/`외선`. `?direction=상선` 으로 필터하면 후보가 **조용히 0건**이 됩니다.
+→ `naming.normalize_direction()` 으로 `상선`/`하선` 에 모읍니다.
+
+### 혼잡도 소스는 역 단위로 고릅니다
+
+`official` 과 `estimated` 를 **함께 평균하면 안 됩니다.** 공식 통계가 추정 오차만큼
+오염되는데, 결과가 숫자 하나라 틀렸다는 걸 알아챌 수 없습니다.
+(강남 08:00 기준 — 섞으면 97.3%, 공식만 쓰면 **75.5%**)
+
+노선 단위가 아니라 **역 단위**로 고르는 이유: 공식 통계는 서울교통공사 구간만 다뤄서,
+같은 1호선이라도 연천처럼 추정치밖에 없는 역이 있습니다.
+
+```
+1호선 → official 10역 (서울역~청량리)  +  estimated 91역 (경부·경인·경원선)
+2호선 → official 51역 (전부)
+```
+
+`/api/heatmap` 은 역별 `source` 를 함께 돌려주고, 화면은 값마다 공식/추정을 라벨링합니다.
 
 ---
 
-## 데이터 출처
-
-서울 열린데이터광장 (data.seoul.go.kr) · 서울시 교통정보과 TOPIS
+<sub>데이터 출처: 서울 열린데이터광장(data.seoul.go.kr) · 서울시 교통정보과 TOPIS</sub>
