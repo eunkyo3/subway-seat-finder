@@ -10,8 +10,8 @@ FastAPI + DuckDB + Leaflet · `docker compose up` 한 번으로 실행됩니다.
 ## 빠른 시작
 
 ```bash
-# 0) 인증키 준비 (아래 '인증키 설정' 참고)
-echo "발급받은_일반_인증키" > api-key.txt
+# 0) 환경변수 파일 준비 — .env 에 인증키를 채웁니다 (아래 '설정' 참고)
+cp .env.example .env
 
 # 1) 배치 데이터 적재 (역 마스터 · 승하차 · 혼잡도)
 docker compose run --rm etl
@@ -24,6 +24,7 @@ docker compose up
 로컬(도커 없이) 실행:
 
 ```bash
+cp .env.example .env                               # 인증키 채우기
 python -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # source .venv/bin/activate && pip install -r requirements.txt  # macOS/Linux
@@ -34,34 +35,49 @@ uvicorn backend.app.main:app --reload              # 앱 실행
 
 ---
 
-## 인증키 설정 ⚠️ 중요
+## 설정 ⚠️ 중요
 
-서울 열린데이터광장은 **인증키가 두 종류**이고, 서로 호환되지 않습니다.
+설정은 **`.env` 하나**로 들어갑니다. 도커든 로컬이든 CI든 주입 경로가 같아서
+"어디에 넣어야 하나"를 헷갈릴 일이 없습니다.
 
-| 종류 | 쓰는 곳 | 놓을 파일 | 필수 |
+```bash
+cp .env.example .env    # 그리고 값을 채웁니다
+```
+
+> `.env` 는 `.gitignore` 로 제외됩니다. **절대 커밋하지 마세요.**
+> `.env.example` 은 값이 빈 템플릿이라 커밋됩니다.
+
+### 환경변수 목록
+
+| 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| **일반 인증키** | `openapi.seoul.go.kr:8088`<br>역 마스터·좌표·승하차 통계 | `api-key.txt` | ✅ 필수 |
-| **실시간 지하철 인증키** | `swopenapi.seoul.go.kr`<br>열차 위치·도착 | `realtime-api-key.txt` | ⬜ 선택 |
+| `SEOUL_API_KEY` | ✅ | — | 일반 인증키 (역 마스터·좌표·승하차) |
+| `SEOUL_REALTIME_API_KEY` | ⬜ | — | 실시간 지하철 인증키 (열차 위치·도착) |
+| `SUBWAY_DB_PATH` | | `data/subway.duckdb` | DuckDB 파일 |
+| `SUBWAY_RAW_DIR` | | `data/raw` | 혼잡도 원본 파일 폴더 |
+| `SUBWAY_SNAPSHOT_DIR` | | `data/snapshots` | 실시간 스냅샷 폴더 |
+| `REALTIME_CACHE_TTL` | | `30` | 실시간 응답 캐시 수명(초) |
+| `SIMILAR_THRESHOLD_PCT` | | `8` | 이번/다음 차이가 이 값 미만이면 "비슷함" |
+| `APP_PORT` | | `8000` | 호스트에 노출할 포트 |
 
-> 두 파일 모두 **저장소에 없습니다**(`.gitignore`). 직접 발급받아 프로젝트 루트에 만드세요.
-> `docker compose up` 시 자동으로 마운트됩니다.
+셸이나 도커가 이미 넣어 준 값은 `.env` 가 덮어쓰지 않습니다 — 배포 환경의 주입이 우선입니다.
+도커 실행 시 `SUBWAY_*` 경로는 컨테이너 마운트 지점으로 고정되므로, `.env` 에 호스트 경로를
+적어도 컨테이너 안에서는 무시됩니다.
+
+### 인증키가 두 종류입니다
+
+서울 열린데이터광장은 인증키가 **일반**과 **실시간 지하철** 두 갈래이고 서로 호환되지 않습니다.
+일반 키로 실시간 API를 부르면 `ERROR-338: 해당 인증키로는 실시간 서비스를 사용할 수 없습니다` 가 뜹니다.
+
+1. https://data.seoul.go.kr/together/mypage/actkeyMain.do 로그인
+2. 버튼이 **두 개** 있습니다 — `일반 인증키 신청` / **`실시간 지하철 인증키 신청`**
+3. 각각 발급받아 `.env` 의 `SEOUL_API_KEY` / `SEOUL_REALTIME_API_KEY` 에 넣습니다
 
 실시간 키가 없어도 앱은 정상 기동합니다. 열차 위치만 비고 혼잡도·히트맵·역 정보는 모두 동작합니다.
 
-일반 인증키로 실시간 API를 호출하면 `ERROR-338: 해당 인증키로는 실시간 서비스를 사용할 수 없습니다` 가 뜹니다.
-
-### 실시간 인증키 발급 절차
-
-1. https://data.seoul.go.kr/together/mypage/actkeyMain.do 로그인
-2. **"실시간 지하철 인증키 신청"** 버튼 (일반 인증키 신청과 **다른 버튼**)
-3. 즉시 발급 → `realtime-api-key.txt` 에 한 줄로 저장
-   ```bash
-   echo "발급받은키" > realtime-api-key.txt
-   ```
-   또는 환경변수 `SEOUL_REALTIME_API_KEY`
-
-> **일일 호출 한도 1,000회.** 앱은 노선별 TTL 캐시(기본 30초)로 호출을 억제합니다.
-> 상시 수집을 하려면 [활용사례(갤러리)에 등록](https://data.seoul.go.kr/together/guide/useGuide.do)해 제약을 해제하세요.
+> **실시간 키는 일일 호출 한도 1,000회.** 앱은 노선별 TTL 캐시(`REALTIME_CACHE_TTL`, 기본 30초)로
+> 호출을 억제합니다. 상시 수집을 하려면
+> [활용사례(갤러리)에 등록](https://data.seoul.go.kr/together/guide/useGuide.do)해 제약을 해제하세요.
 
 
 ---
@@ -146,7 +162,7 @@ python -m backend.app.etl.capture_snapshots --rounds 20 --interval 30
                                                        # 실시간 스냅샷 녹화 (실시간 키 필요)
 python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통계 오차 측정
 
-./.venv/Scripts/python.exe -m pytest                   # 테스트 (269개)
+./.venv/Scripts/python.exe -m pytest                   # 테스트 (286개)
 ```
 
 ### 시연 안전망
@@ -238,8 +254,11 @@ python -m backend.app.etl.validate_estimate
 ## 구조
 
 ```
+.env                       설정 전부 (인증키 포함, 커밋 안 됨)
+.env.example               위 파일의 빈 템플릿 (커밋됨)
+
 backend/app/
-├── config.py              설정 · 인증키 로딩 (일반/실시간 2종)
+├── config.py              .env 로딩 · 환경변수 파싱
 ├── db.py                  DuckDB 스키마 · 벌크 삽입
 ├── naming.py              역명/노선명 정규화 (소스 3종의 표기 통일)
 ├── deps.py                앱 상태 (DB 연결 · 실시간 클라이언트 공유)
