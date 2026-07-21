@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
             "실시간 인증키가 없어 녹화할 수 없습니다.\n"
             "  https://data.seoul.go.kr/together/mypage/actkeyMain.do 에서\n"
             "  '실시간 지하철 인증키 신청'(일반 인증키와 별개)을 받아\n"
-            "  realtime-api-key.txt 에 저장하세요."
+            "  .env 의 SEOUL_REALTIME_API_KEY 에 넣으세요."
         )
         return 1
 

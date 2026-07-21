@@ -55,7 +55,10 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
     if not settings.api_key:
-        logger.error("일반 인증키가 없습니다. api-key.txt 또는 SEOUL_API_KEY 를 설정하세요.")
+        logger.error(
+            ".env 에 SEOUL_API_KEY 가 없습니다. .env.example 을 복사해 값을 채우세요.\n"
+            "  발급: https://data.seoul.go.kr/together/mypage/actkeyMain.do"
+        )
         return 1
 
     try:

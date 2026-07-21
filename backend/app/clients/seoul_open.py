@@ -66,7 +66,9 @@ class SeoulOpenClient:
         client: httpx.Client | None = None,
     ) -> None:
         if not api_key:
-            raise ValueError("일반 인증키가 없습니다. api-key.txt 또는 SEOUL_API_KEY 를 설정하세요.")
+            raise ValueError(
+                "일반 인증키가 없습니다. .env 에 SEOUL_API_KEY 를 설정하세요."
+            )
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout)

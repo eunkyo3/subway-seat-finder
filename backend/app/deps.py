@@ -51,7 +51,7 @@ def build_state(settings: Settings | None = None) -> AppState:
         logger.warning(
             "실시간 인증키가 없어 재생(replay) 모드로 동작합니다. "
             "https://data.seoul.go.kr/together/mypage/actkeyMain.do 에서 "
-            "'실시간 지하철 인증키'를 신청해 realtime-api-key.txt 에 넣으세요."
+            "'실시간 지하철 인증키'를 신청해 .env 의 SEOUL_REALTIME_API_KEY 에 넣으세요."
         )
 
     return AppState(settings=settings, con=con, realtime=RealtimeClient(settings))
