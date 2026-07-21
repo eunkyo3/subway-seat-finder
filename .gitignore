@@ -1,0 +1,22 @@
+# 인증키 — 절대 커밋하지 말 것
+api-key.txt
+realtime-api-key.txt
+.env
+
+# 데이터 (배치로 재생성 가능)
+data/*.duckdb
+data/*.duckdb.wal
+data/raw/*
+!data/raw/.gitkeep
+data/snapshots/*
+!data/snapshots/.gitkeep
+
+# 파이썬
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OMC 런타임 상태
+.omc/
+progress.txt
