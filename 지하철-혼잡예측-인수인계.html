@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>지하철 실시간 혼잡 예측 라이브 웹앱 — 인수인계 문서</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #5c6672; --border: #e2e6ea;
+    --card: #f7f9fb; --accent: #1f6feb; --accent-soft: #e7f0ff;
+    --warn-bg: #fff4e5; --warn-bd: #f0b429; --warn-fg: #7a4d00;
+    --ok-bg: #e8f6ec; --ok-bd: #2f9e44; --ok-fg: #1b5e20;
+    --tip-bg: #eef2ff; --tip-bd: #5b6ef5; --tip-fg: #2b3a8f;
+    --code-bg: #0d1117; --code-fg: #e6edf3;
+    --th-bg: #eef2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116; --fg: #e6edf3; --muted: #9aa4b2; --border: #262c36;
+      --card: #161b22; --accent: #58a6ff; --accent-soft: #12263f;
+      --warn-bg: #2b2113; --warn-bd: #d9a441; --warn-fg: #f2d08b;
+      --ok-bg: #12251a; --ok-bd: #3fb950; --ok-fg: #7ee2a0;
+      --tip-bg: #171b34; --tip-bd: #7d8bf5; --tip-fg: #b8c1ff;
+      --code-bg: #010409; --code-fg: #e6edf3;
+      --th-bg: #1c232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+    line-height: 1.7; font-size: 16px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px 120px; }
+  header.hero {
+    background: linear-gradient(135deg, var(--accent-soft), transparent);
+    border-bottom: 1px solid var(--border); padding: 48px 20px 36px; margin-bottom: 8px;
+  }
+  header.hero .inner { max-width: 1100px; margin: 0 auto; }
+  .badge { display: inline-block; background: var(--accent); color: #fff; font-size: 12px;
+    font-weight: 700; padding: 4px 10px; border-radius: 999px; letter-spacing: .3px; }
+  h1 { font-size: 30px; margin: 14px 0 6px; line-height: 1.3; }
+  .sub { color: var(--muted); font-size: 16px; margin: 0; }
+  .meta-row { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; font-size: 13px; color: var(--muted); }
+  .chip b { color: var(--fg); }
+  nav.toc {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 22px; margin: 24px 0 32px;
+  }
+  nav.toc h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 0 0 10px; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  @media (max-width: 640px){ nav.toc ol { columns: 1; } }
+  nav.toc a { color: var(--fg); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+  section { margin: 40px 0; scroll-margin-top: 20px; }
+  h2.sec { font-size: 23px; border-left: 4px solid var(--accent); padding-left: 12px; margin-bottom: 6px; }
+  h3 { font-size: 18px; margin-top: 28px; }
+  p, li { color: var(--fg); }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14.5px; display: block; overflow-x: auto; }
+  th, td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--th-bg); font-weight: 700; white-space: nowrap; }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--card) 55%, transparent); }
+  code { background: color-mix(in srgb, var(--muted) 18%, transparent); padding: 1px 6px; border-radius: 5px;
+    font-family: "SF Mono", "Consolas", "D2Coding", monospace; font-size: 13.5px; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 16px 18px; border-radius: 10px;
+    overflow-x: auto; font-size: 13px; line-height: 1.55; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  .callout { border-radius: 10px; padding: 14px 18px; margin: 18px 0; border: 1px solid; }
+  .callout p { margin: 6px 0; }
+  .callout .c-title { font-weight: 700; margin: 0 0 4px; }
+  .warn { background: var(--warn-bg); border-color: var(--warn-bd); color: var(--warn-fg); }
+  .ok   { background: var(--ok-bg);   border-color: var(--ok-bd);   color: var(--ok-fg); }
+  .tip  { background: var(--tip-bg);  border-color: var(--tip-bd);  color: var(--tip-fg); }
+  .warn code,.ok code,.tip code { color: inherit; }
+  a { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 18px 0; }
+  .featcard { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .featcard h4 { margin: 0 0 6px; font-size: 16px; }
+  .featcard p { margin: 0; font-size: 14px; color: var(--muted); }
+  .step { display: flex; gap: 14px; margin: 14px 0; }
+  .step .n { flex: 0 0 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; }
+  .step .body { flex: 1; }
+  .step .body h4 { margin: 4px 0 4px; }
+  .flow { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; font-family: monospace; font-size: 13px; line-height: 2; overflow-x: auto; }
+  .arch-wrap { position: relative; border: 1.5px dashed var(--accent); border-radius: 14px; padding: 24px 16px 16px; margin: 12px 0 18px; }
+  .arch-wrap .docker-tag { position: absolute; top: -11px; left: 16px; background: var(--bg); padding: 0 8px; font-size: 12px; font-weight: 700; color: var(--accent); }
+  .arch-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; text-align: center; }
+  .arch-box .lbl { font-weight: 700; }
+  .arch-box .desc { font-size: 12.5px; color: var(--muted); display: block; margin-top: 3px; }
+  .arch-box.ext { border-color: var(--accent); background: var(--accent-soft); }
+  .arch-box.accent { border-color: var(--accent); }
+  .arch-box.live { border-style: dashed; }
+  .arch-arrow { text-align: center; color: var(--muted); font-size: 17px; padding: 5px 0; font-family: monospace; }
+  .arch-branch { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px){ .arch-branch { grid-template-columns: 1fr; } }
+  .arch-col { display: flex; flex-direction: column; }
+  .arch-col .arch-arrow { font-size: 13px; }
+  .arch-sub { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+  .arch-sub .pillbox { background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12.5px; }
+  .stack-cat { font-weight: 700; white-space: nowrap; }
+  .pill { display:inline-block; font-size:12px; font-weight:700; padding:2px 8px; border-radius:6px; }
+  .pill.y { background: var(--ok-bg); color: var(--ok-fg); border:1px solid var(--ok-bd); }
+  .pill.n { background: var(--warn-bg); color: var(--warn-fg); border:1px solid var(--warn-bd); }
+  footer { border-top: 1px solid var(--border); margin-top: 60px; padding-top: 20px; color: var(--muted); font-size: 13px; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin: 8px 0; }
+  .checklist li::before { content: "☐"; position: absolute; left: 0; font-size: 18px; color: var(--accent); }
+  @media print {
+    header.hero { background: none; }
+    nav.toc { break-inside: avoid; }
+    section { break-inside: avoid-page; }
+    pre, table, .callout { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="inner">
+    <span class="badge">인수인계 문서 · HANDOFF</span>
+    <h1>🚇 지하철 실시간 혼잡 예측 라이브 웹앱</h1>
+    <p class="sub">서울 지하철 실시간 위치 + 과거 혼잡·이동 패턴을 결합해 <b>“이번에 오는 열차가 얼마나 붐빌지”</b>를 예측하고, <b>어느 열차를 타야 앉을 수 있는지 행동을 추천</b>하는 로컬 Docker 대시보드</p>
+    <div class="meta-row">
+      <span class="chip">프로젝트 유형 · <b>대학 빅데이터-기획 PBL</b></span>
+      <span class="chip">실행 · <b>로컬 Docker</b></span>
+      <span class="chip">데이터 · <b>서울 열린데이터광장</b></span>
+      <span class="chip">방식 · <b>하이브리드 + 재생 폴백</b></span>
+      <span class="chip">범위 · <b>위치/도착 전 노선 · 예측 1~8호선</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <h2>목차</h2>
+  <ol>
+    <li><a href="#overview">프로젝트 한눈에 보기</a></li>
+    <li><a href="#what">무엇을 만드나 (기능)</a></li>
+    <li><a href="#arch">아키텍처 & 시스템 구조도</a></li>
+    <li><a href="#data">사용 데이터 (어디서 무엇을)</a></li>
+    <li><a href="#lines">지원 호선 & 코드표</a></li>
+    <li><a href="#apply">API 신청 방법 (단계별)</a></li>
+    <li><a href="#limit">호출 한도 & 수집 전략</a></li>
+    <li><a href="#algo">예측 알고리즘</a></li>
+    <li><a href="#verify">검증 방법</a></li>
+    <li><a href="#diff">기존 앱 대비 차별점</a></li>
+    <li><a href="#stack">기술 스택 & DB 스키마</a></li>
+    <li><a href="#view">화면 구성</a></li>
+    <li><a href="#todo">남은 확인 항목 & 리스크</a></li>
+    <li><a href="#present">발표 포인트</a></li>
+  </ol>
+</nav>
+
+<section id="overview">
+  <h2 class="sec">1. 프로젝트 한눈에 보기</h2>
+  <p>기존 지하철 앱은 “열차가 몇 분 뒤 온다”는 <b>현재 상태</b>만 보여준다. 이 프로젝트는 한 발 더 나아가 <b>“앞으로 얼마나 붐빌지”를 예측</b>하고, <b>“이번 열차를 탈까 / 한 대 보낼까 / 몇 정거장 뒤 앉을 수 있을까”</b>라는 <b>행동을 추천</b>한다.</p>
+  <div class="callout tip">
+    <p class="c-title">💡 한 줄 정의</p>
+    <p>서울 지하철 1~8호선 대상으로, 실시간 열차 위치를 지도에 띄우고 + 이번 열차의 예상 혼잡도를 계산해 “어느 열차를 타야 덜 붐비는지”를 추천하는 <b>로컬 Docker 라이브 웹 대시보드</b>.</p>
+  </div>
+  <p class="muted">본 프로젝트는 두 선행 프로젝트(NutriRank = 읽기전용 앱 + 배치 파이프라인 / weather-crash-risk = 지도 시각화 + 한계 정직 문서화)의 구조를 재사용한다.</p>
+</section>
+
+<section id="what">
+  <h2 class="sec">2. 무엇을 만드나 (핵심 기능)</h2>
+  <div class="grid">
+    <div class="featcard"><h4>① 실시간 노선도</h4><p>1~9호선+광역철도 열차가 노선도 위에서 실제 위치대로 움직인다.</p></div>
+    <div class="featcard"><h4>② 이번 열차 예상 혼잡도</h4><p>도착 예정 열차의 혼잡도를 %·등급(여유/보통/혼잡)으로 표시.</p></div>
+    <div class="featcard"><h4>③ 이번 vs 다음 추천</h4><p>배차간격 기반으로 “다음 열차가 더 여유로워요” 추천. 차이가 미미하면 “비슷함”.</p></div>
+    <div class="featcard"><h4>④ 앉을 타이밍 예측</h4><p>“3정거장 뒤 사당에서 대량 하차 → 그때부터 앉을 확률↑” 타임라인.</p></div>
+    <div class="featcard"><h4>⑤ 빈 열차(시발) 알림</h4><p>중간역 시발로 텅 비어 오는 열차를 감지해 우선 추천.</p></div>
+    <div class="featcard"><h4>⑥ 이동량 분석</h4><p>역별·시간대별 승하차로 혼잡 히트맵과 이동 패턴 시각화.</p></div>
+  </div>
+</section>
+
+<section id="arch">
+  <h2 class="sec">3. 아키텍처 · 동작 방식 · 시스템 구조도</h2>
+  <p>데이터를 <b>성격에 따라 두 갈래</b>로 나눠 다룬다. 하나는 미리 준비해 DB에 넣어두는 <b>배치 데이터</b>, 다른 하나는 데모 순간 불러오는 <b>실시간 위치</b>다.</p>
+  <ul>
+    <li><b>① 배치 데이터 (혼잡도·승하차 등) = 다른 곳에서 준비 → DB에 적재</b>. 혼잡도·승하차는 실시간 데이터가 없고 과거 통계뿐이므로, <b>별도로 준비·가공한 데이터를 DB에 “갈아끼거나 추가”</b>한다. 예측 계산의 기준값이 된다.</li>
+    <li><b>② 실시간 열차 위치·도착 = 데모 순간 라이브 API 호출</b> → 지도의 열차가 “진짜 지금” 위치대로 움직인다.</li>
+    <li><b>데모 = ①을 넣어둔 상태 + ②를 라이브로 표시.</b> 즉 미리 적재한 배치 데이터 위에서, 실시간 위치를 얹어 예측·추천을 보여준다.</li>
+  </ul>
+  <div class="callout tip">
+    <p class="c-title">🔁 “데이터 갈아끼기”의 정확한 의미</p>
+    <p>앱이 실시간 위치를 <b>미리 녹화</b>해 두는 게 아니다. <b>배치로 준비한 혼잡도·승하차 데이터를 DB에 넣거나 최신 것으로 교체(갈아끼기)·추가</b>하는 <b>데이터 관리/갱신</b>을 뜻한다. 앱은 그 DB를 읽고, 위치만 라이브로 호출한다.</p>
+  </div>
+  <div class="flow">
+[ 배치 준비 (앱과 분리) ]  혼잡도·승하차 등 데이터 가공 → DB에 적재 / 갈아끼기 / 추가<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&darr;<br>
+[ 로컬 Docker 웹앱 실행 ]  DB의 배치 데이터 로드<br>
+&nbsp;&nbsp;&nbsp;&nbsp;+  실시간 위치·도착 API 라이브 호출 (데모 순간)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&darr;<br>
+[ 예측 엔진 ]  기준혼잡도(배치) + 배차간격·시발감지(실시간 위치) + 하차궤적(배치) → 예상혼잡도<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&darr;<br>
+[ 화면 ]  노선도 + 실시간 열차 마커 + 이번/다음 카드 + 히트맵<br>
+<br>
+[ (선택) 안전망 ]  네트워크·API 장애 대비, 미리 저장한 위치 스냅샷 재생
+  </div>
+
+  <h3>시스템 구조도</h3>
+  <div class="arch-box ext" style="margin-bottom:6px;">
+    <span class="lbl">🌐 서울 열린데이터광장 · 외부 데이터 소스</span>
+    <div class="arch-sub">
+      <span class="pillbox">실시간 위치·도착 API</span>
+      <span class="pillbox">혼잡도·승하차 파일</span>
+    </div>
+  </div>
+  <div class="arch-arrow">│ 파일(배치) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; │ 위치(라이브) &nbsp; ▼</div>
+  <div class="arch-wrap">
+    <span class="docker-tag">🐳 Docker Compose 로 전체 패키징 · 로컬 실행</span>
+    <div class="arch-branch">
+      <div class="arch-col">
+        <div class="arch-box"><span class="lbl">⚙️ 배치 로더 (Python)</span><span class="desc">혼잡도·승하차 가공 → DB 적재 / 갈아끼기 / 추가</span></div>
+        <div class="arch-arrow">▼</div>
+        <div class="arch-box"><span class="lbl">🗄️ DB (PostgreSQL / DuckDB)</span><span class="desc">혼잡도·승하차·역 마스터</span></div>
+      </div>
+      <div class="arch-col">
+        <div class="arch-box live"><span class="lbl">📡 실시간 위치 수신 (앱 런타임)</span><span class="desc">데모 순간 라이브 호출 → 배차간격·시발 계산</span></div>
+      </div>
+    </div>
+    <div class="arch-arrow">▼ &nbsp;&nbsp; 배치 데이터 + 실시간 위치 합류 &nbsp;&nbsp; ▼</div>
+    <div class="arch-box accent"><span class="lbl">🧮 백엔드 예측 엔진 (FastAPI)</span><span class="desc">기준혼잡도(배치) + 배차간격·시발(실시간) + 하차궤적(배치) → 예상혼잡도</span></div>
+    <div class="arch-arrow">▼</div>
+    <div class="arch-box accent"><span class="lbl">🖥️ 프론트 웹 대시보드</span><span class="desc">실시간 노선도 · 이번/다음 카드 · 앉을 타이밍 · 혼잡 히트맵</span></div>
+  </div>
+
+  <div class="callout ok">
+    <p class="c-title">✅ 왜 로컬 Docker인가</p>
+    <p>24시간 상시 서버·클라우드 배포가 불필요하다. <b>혼잡도·승하차 배치 데이터는 앱과 분리해 따로 준비·적재</b>하고, 앱은 그 DB를 읽으며 <b>실시간 위치만 라이브로 호출</b>한다. <code>docker compose up</code> 한 번으로 어디서든 재현 가능 — NutriRank의 “읽기전용 앱 + 별도 배치” 구조와 동일.</p>
+  </div>
+</section>
+
+<section id="data">
+  <h2 class="sec">4. 사용 데이터 (어디서 무엇을)</h2>
+  <p>모든 데이터는 <b>서울 열린데이터광장(<a href="https://data.seoul.go.kr">data.seoul.go.kr</a>)</b>에서 <b>인증키 1개</b>로 받는다. 지하철은 서울시 소관이라 이곳이 원천이며, 인증키 하나로 아래 API를 모두 호출할 수 있다.</p>
+  <table>
+    <thead><tr><th>데이터셋</th><th>코드</th><th>성격</th><th>용도</th><th>링크</th></tr></thead>
+    <tbody>
+      <tr><td>실시간 열차 위치정보</td><td>OA-12601</td><td>실시간(분)</td><td>지도 위 열차 위치 · 열차번호 추적(시발감지·배차간격)</td><td><a href="https://data.seoul.go.kr/dataList/OA-12601/A/1/datasetView.do">열기</a></td></tr>
+      <tr><td>실시간 도착정보</td><td>OA-12764</td><td>실시간</td><td>이번 열차 도착시각 · 급행 여부 · 행선지</td><td><a href="https://data.seoul.go.kr/dataList/OA-12764/F/1/datasetView.do">열기</a></td></tr>
+      <tr><td>실시간 도착정보(일괄)</td><td>OA-15799</td><td>실시간</td><td>전 노선/전 역을 한 번에 수집(호출 수 절감)</td><td><a href="https://data.seoul.go.kr/dataList/OA-15799/A/1/datasetView.do">열기</a></td></tr>
+      <tr><td>지하철 혼잡도 정보</td><td>OA-12928</td><td>과거 통계</td><td>요일·역·시간대(30분) 평균 혼잡도 → 예측 기준값</td><td><a href="https://data.seoul.go.kr/dataList/OA-12928/F/1/datasetView.do">열기</a></td></tr>
+      <tr><td>역별 일별 시간대별 승하차</td><td>OA-12921</td><td>과거 집계</td><td>역별 이동량 · 대량 하차역 식별(하차궤적)</td><td><a href="https://data.seoul.go.kr/dataList/OA-12921/F/1/datasetView.do">열기</a></td></tr>
+    </tbody>
+  </table>
+  <p class="muted">참고: 역 좌표·노선·환승 매핑이 필요하면 <a href="https://www.data.go.kr/data/15058404/openapi.do">서울교통공사_노선별 지하철역 정보</a>(공공데이터포털)를 함께 쓴다.</p>
+  <div class="callout warn">
+    <p class="c-title">⚠️ 데이터 성격 주의</p>
+    <p>실시간으로 받을 수 있는 건 <b>위치·도착뿐</b>이다. <b>혼잡도·승하차는 과거 통계·집계</b>이며 실시간 값이 없다. 따라서 “예측 계산”은 구조적으로 배치 데이터 기반일 수밖에 없다.</p>
+  </div>
+</section>
+
+<section id="lines">
+  <h2 class="sec">5. 지원 호선 & subwayId 코드표</h2>
+  <p>실시간 위치·도착 API는 1~9호선을 넘어 <b>광역철도까지</b> 지원한다. 다만 <b>혼잡도 통계는 서울교통공사 운영 1~8호선만</b> 존재한다. 그래서 <b>2단계 구현</b>을 한다.</p>
+  <ul>
+    <li><b>지도·위치·도착 표시</b> = API 지원 <b>전 노선</b></li>
+    <li><b>예측·추천</b> = <b>1~8호선만</b> (그 외 노선은 위치·도착만 표시)</li>
+    <li>서울시 <b>외</b> 구간(광명·서동탄·춘천 등)은 API 미제공 → 자연 제외</li>
+  </ul>
+  <table>
+    <thead><tr><th>subwayId</th><th>노선</th><th>위치·도착</th><th>예측(혼잡)</th></tr></thead>
+    <tbody>
+      <tr><td>1001~1008</td><td>1~8호선</td><td><span class="pill y">지원</span></td><td><span class="pill y">지원</span></td></tr>
+      <tr><td>1009</td><td>9호선</td><td><span class="pill y">지원</span></td><td><span class="pill n">통계 없음</span></td></tr>
+      <tr><td>1063</td><td>경의중앙선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1065</td><td>공항철도</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1067</td><td>경춘선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1075</td><td>수인분당선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1077</td><td>신분당선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1092</td><td>우이신설선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1093</td><td>서해선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+      <tr><td>1081</td><td>경강선</td><td><span class="pill y">지원</span></td><td><span class="pill n">없음</span></td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p class="c-title">⚠️ 코드는 참고값</p>
+    <p>위 subwayId·지원 노선은 참고용이다. <b>최종 목록·코드는 반드시 각 데이터셋의 API 명세서(미리보기)에서 확인</b>할 것. 서울시가 노선을 추가/변경할 수 있다.</p>
+  </div>
+</section>
+
+<section id="apply">
+  <h2 class="sec">6. API 신청 방법 (단계별)</h2>
+  <p>신청은 <b>서울 열린데이터광장 한 곳</b>이면 끝난다. (SKT/공공데이터포털 불필요)</p>
+  <div class="step"><div class="n">1</div><div class="body">
+    <h4>회원가입 & 로그인</h4>
+    <p><a href="https://data.seoul.go.kr">data.seoul.go.kr</a> 접속 → 회원가입.</p>
+  </div></div>
+  <div class="step"><div class="n">2</div><div class="body">
+    <h4>인증키 발급</h4>
+    <p>마이페이지 → <a href="https://data.seoul.go.kr/together/mypage/actKey.do">인증키 신청·관리</a>에서 일반 인증키 1개 발급. <b>이 키 하나로 실시간 위치·도착 API를 모두 호출</b>한다. 대체로 즉시 발급된다.</p>
+  </div></div>
+  <div class="step"><div class="n">3</div><div class="body">
+    <h4>혼잡도·승하차 파일 다운로드</h4>
+    <p>OA-12928(혼잡도), OA-12921(승하차)은 <b>파일 다운로드</b>라 인증키 없이 로그인만으로 내려받는다.</p>
+  </div></div>
+  <div class="step"><div class="n">4</div><div class="body">
+    <h4>(권장) 활용사례 갤러리 등록 → 호출 제약 해제</h4>
+    <p>서울 광장은 인증키에 기본 호출 제한이 있으나, <b>활용사례(갤러리)에 프로젝트를 등록하면 “이용 제약 없이” 사용</b>할 수 있다. 실시간 수집을 하려면 등록해두는 것이 안전하다. (<a href="https://data.seoul.go.kr/together/guide/useGuide.do">Open API 이용가이드</a>)</p>
+  </div></div>
+  <div class="callout ok">
+    <p class="c-title">✅ 호출 예시 (실시간 도착)</p>
+    <pre><code>GET http://swopenapi.seoul.go.kr/api/subway/{인증키}/json/realtimeStationArrival/0/10/{역명}
+
+# 실시간 위치 (호선 단위)
+GET http://swopenapi.seoul.go.kr/api/subway/{인증키}/json/realtimePosition/0/100/{호선명}</code></pre>
+    <p>응답은 JSON. <code>{인증키}</code>를 발급받은 키로 바꾸면 된다. 정확한 엔드포인트/파라미터는 각 데이터셋 명세서에서 최종 확인.</p>
+  </div>
+</section>
+
+<section id="limit">
+  <h2 class="sec">7. 호출 한도 & 수집 전략</h2>
+  <table>
+    <thead><tr><th>구분</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td>1회 응답 행 제한</td><td>최대 <b>1,000건</b> → 넘으면 페이지 나눠 호출</td></tr>
+      <tr><td>일일 호출 한도</td><td>인증키당 기본 제한 존재 → <b>갤러리 등록 시 제약 해제</b> (정확한 기본 수치는 데이터셋 “API 상세 → 일일 트래픽”에서 확인)</td></tr>
+      <tr><td>시간 보정</td><td><code>recptnDt</code>(데이터 생성시각)와 현재시각 차이만큼 열차가 더 진행한 것으로 <b>위치 보정</b> 필요</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p class="c-title">⚠️ 수집 빈도 함정</p>
+    <p>30초마다 8개 호선을 개별 호출하면 하루 2만 건+ → 기본 한도 초과. <b>해결책 2가지를 함께 적용</b>한다:</p>
+    <p>① <b>일괄 도착 엔드포인트(OA-15799)</b>로 전 노선을 소수 호출로 수집 → 호출 수 급감<br>② <b>갤러리 등록</b>으로 제약 해제</p>
+  </div>
+</section>
+
+<section id="algo">
+  <h2 class="sec">8. 예측 알고리즘</h2>
+  <p>핵심은 <b>“이번 vs 다음”을 무엇으로 가르느냐</b>이다. 이번·다음 열차는 몇 분 차이라 <b>같은 30분 통계 구간</b>에 들어가 통계만으로는 구분되지 않는다. 그래서 <b>실시간 신호 3가지</b>로 보정한다.</p>
+  <div class="callout tip">
+    <p class="c-title">🧮 예측 공식</p>
+    <pre><code>예상혼잡도 = 기준혼잡도(역·요일·시간대 통계)
+           × 배차간격 보정   ← 앞 열차와 간격이 길수록 승객 누적↑ = 더 붐빔
+           × 시발 보정       ← 시발역 출발 빈 열차면 하향
+           − 하차궤적 보정   ← 내 목적지까지 대량 하차역에서 감소
+
+추천 = 이번/다음 중 min(예상혼잡도)
+       단, |이번 − 다음| < 임계값 이면 "비슷함"으로 표시(과잉추천 방지)</code></pre>
+  </div>
+  <table>
+    <thead><tr><th>신호</th><th>계산 방법</th><th>데이터 출처</th></tr></thead>
+    <tbody>
+      <tr><td><b>배차간격(headway)</b></td><td>실시간 도착 간격 또는 열차번호 궤적으로 앞 열차와의 시간차 산출. 이번/다음을 가르는 핵심 지표</td><td>OA-12601 / OA-12764</td></tr>
+      <tr><td><b>시발 감지</b></td><td>열차번호(btrainNo)가 <b>처음 등장한 역</b>을 추적 → 중간 시발이면 빈 열차. (회차/입고 열차와 구분 신뢰도는 수집 데이터로 검증)</td><td>OA-12601 (수집 축적)</td></tr>
+      <tr><td><b>하차 궤적</b></td><td>역별 혼잡도 궤적 + 승하차로 “어느 역에서 대거 빠지는지” 계산 → 목적지 전까지 앉을 타이밍 추정</td><td>OA-12928 + OA-12921</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">배차간격 보정계수는 초기엔 정성적 규칙으로 두고, 수집 데이터가 쌓이면 캘리브레이션(튜닝)한다. 후속으로 ML 모델(LightGBM 등)로 업그레이드 여지.</p>
+</section>
+
+<section id="verify">
+  <h2 class="sec">9. 검증 방법</h2>
+  <div class="callout warn">
+    <p class="c-title">⚠️ 핵심 약점 = 실측 정답 부재</p>
+    <p>열차 내 재차인원 센서가 없어 “정확히 몇 명”의 실측 정답이 없다. 그래서 인원수(명)가 아니라 <b>혼잡도 %(추정)</b>로 표현한다.</p>
+  </div>
+  <p>검증 전략(교수의 “그게 맞는지 어떻게 아냐” 방어용):</p>
+  <ul>
+    <li><b>공식 통계를 의사정답(pseudo-ground-truth)으로</b>: 예측 혼잡도를 공식 30분 평균 혼잡도(OA-12928)와 대조해 <b>예측 오차</b>를 측정</li>
+    <li><b>배차간격–혼잡 상관분석</b>: 우리가 수집한 실시간 데이터에서 “간격이 길수록 붐빈다” 가설을 통계로 검증</li>
+    <li><b>한계 정직 명시</b>: 표본·센서 한계를 문서화(weather-crash-risk 스타일) → 오히려 학술적 신뢰 확보</li>
+  </ul>
+</section>
+
+<section id="diff">
+  <h2 class="sec">10. 기존 앱 대비 차별점</h2>
+  <table>
+    <thead><tr><th>항목</th><th>기존 앱 (카카오맵·또타지하철·T맵 등)</th><th>본 프로젝트</th></tr></thead>
+    <tbody>
+      <tr><td>혼잡 정보</td><td>현재 역 혼잡도(상태)</td><td><b>열차별 예측 + 노선 따라 변하는 궤적</b></td></tr>
+      <tr><td>이번/다음</td><td>도착시간만 표시</td><td><b>배차간격 기반 “뭘 타라” 추천</b></td></tr>
+      <tr><td>앉을 자리</td><td>칸별은 일부(2·3호선)만</td><td><b>“몇 정거장 뒤 앉는다” 타이밍 예측</b></td></tr>
+      <tr><td>빈 열차</td><td>안 알려줌</td><td><b>시발 빈 열차 우선 추천</b></td></tr>
+      <tr><td>데이터 활용</td><td>실시간만 소비</td><td><b>실시간을 축적 → 패턴·예측·분석</b></td></tr>
+    </tbody>
+  </table>
+  <div class="callout tip">
+    <p class="c-title">🎯 한 줄 가치 제안</p>
+    <p>“도착 정보는 흔하지만, <b>배차간격·하차궤적·시발열차를 종합해 ‘어느 열차를 타야 앉는지’를 예측·추천</b>하는 서비스는 없다.” — 상태 표시(정보) → 행동 추천(의사결정)으로 한 단계 올린다.</p>
+  </div>
+</section>
+
+<section id="stack">
+  <h2 class="sec">11. 기술 스택 & DB 스키마</h2>
+  <h3>기술 스택 (제안)</h3>
+  <table>
+    <thead><tr><th>영역</th><th>기술</th><th>역할</th></tr></thead>
+    <tbody>
+      <tr><td class="stack-cat">언어</td><td>Python 3.11+ · TypeScript/JavaScript</td><td>배치·백엔드 / 프론트</td></tr>
+      <tr><td class="stack-cat">데이터 처리</td><td>pandas · DuckDB</td><td>혼잡도·승하차 가공·집계</td></tr>
+      <tr><td class="stack-cat">배치 스케줄</td><td>APScheduler / cron</td><td>데이터 적재·갈아끼기·갱신</td></tr>
+      <tr><td class="stack-cat">데이터베이스</td><td>PostgreSQL(+PostGIS 선택) 또는 DuckDB</td><td>저장·시계열 집계</td></tr>
+      <tr><td class="stack-cat">백엔드</td><td>FastAPI (Python)</td><td>예측 API + 실시간 위치 라이브 호출</td></tr>
+      <tr><td class="stack-cat">프론트엔드</td><td>HTML/CSS/JS (+ React/Next.js 선택)</td><td>대시보드 UI</td></tr>
+      <tr><td class="stack-cat">지도·시각화</td><td>Leaflet / D3.js / deck.gl · SVG 노선도</td><td>노선도·실시간 마커·히트맵</td></tr>
+      <tr><td class="stack-cat">인프라</td><td>Docker · Docker Compose</td><td>로컬 재현·패키징 (<code>docker compose up</code>)</td></tr>
+      <tr><td class="stack-cat">외부 API</td><td>서울 열린데이터광장 실시간 지하철</td><td>실시간 위치·도착</td></tr>
+      <tr><td class="stack-cat">테스트(선택)</td><td>pytest · Playwright</td><td>단위·E2E 검증</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">위 스택은 선행 프로젝트와 정합적이다 — NutriRank(Next.js·TypeScript·Docker·Vitest/Playwright), weather-crash-risk(Python·PostGIS·Docker·Leaflet)의 구성을 재사용·응용할 수 있다.</p>
+  <h3>DB 스키마 초안</h3>
+  <pre><code>-- 실시간 위치 로그 (수집기가 주기적으로 축적)
+train_position_log(
+  id, subway_id, train_no, station_id, direction,
+  express_yn, terminal_station, position_status,
+  reception_dt,        -- recptnDt (원천 생성시각)
+  collected_at         -- 우리가 수집한 시각
+)
+
+-- 도착 로그 (배차간격 계산용)
+arrival_log(
+  id, subway_id, station_id, train_no,
+  arrival_eta_sec, express_yn, terminal_station, collected_at
+)
+
+-- 혼잡도 통계 (정적, 파일 적재)
+congestion_stat(
+  subway_id, station_id, day_type,      -- 평일/토/일
+  time_slot,                            -- 30분 단위
+  congestion_pct
+)
+
+-- 승하차 (정적, 파일 적재)
+station_flow(
+  station_id, date, time_slot, board_cnt, alight_cnt
+)
+
+-- 역 마스터 (좌표·노선·순서·환승)
+station_master(
+  station_id, name, subway_id, seq, lat, lng, transfer_yn
+)</code></pre>
+  <p class="muted">핵심 파생값: (1) 열차번호별 궤적 → 시발 감지 · 배차간격, (2) congestion_stat × station_flow → 하차궤적, (3) 최근 스냅샷 저장 → 재생 폴백.</p>
+</section>
+
+<section id="view">
+  <h2 class="sec">12. 화면 구성</h2>
+  <div class="grid">
+    <div class="featcard"><h4>메인: 실시간 노선도</h4><p>노선도 위 열차 마커가 실제 위치대로 이동. 혼잡도에 따라 색상(초록→노랑→빨강).</p></div>
+    <div class="featcard"><h4>역 선택 패널</h4><p>역 클릭 시 “이번 열차 카드”: 도착 O분 · 예상 혼잡도 %·등급 · 급행 여부.</p></div>
+    <div class="featcard"><h4>이번 vs 다음 카드</h4><p>두 열차 비교 + “다음이 더 여유로워요” 추천 배지.</p></div>
+    <div class="featcard"><h4>앉을 타이밍 타임라인</h4><p>목적지까지 정거장별 예상 혼잡 변화 + “여기서부터 앉을 확률↑” 마커.</p></div>
+    <div class="featcard"><h4>혼잡 히트맵</h4><p>역별·시간대별 평균 혼잡을 색으로. “언제 타면 앉나” 인사이트.</p></div>
+    <div class="featcard"><h4>재생 컨트롤</h4><p>API 실패 시/데모용으로 수집 스냅샷을 시간축 따라 재생.</p></div>
+  </div>
+</section>
+
+<section id="todo">
+  <h2 class="sec">13. 남은 확인 항목 & 리스크</h2>
+  <p>아래는 <b>구현을 막지는 않지만 착수 전/초기에 확정</b>해야 하는 항목이다.</p>
+  <ul class="checklist">
+    <li>서울 광장 API <b>정확한 일일 호출 한도</b> 확인 (데이터셋 API 상세) + 갤러리 등록 여부 결정</li>
+    <li>실시간 위치·도착 API의 <b>최신 지원 노선·subwayId 코드</b> 명세 확인</li>
+    <li><b>배차간격 보정계수</b> 캘리브레이션 방법 (수집 데이터로 튜닝)</li>
+    <li>배치 데이터(혼잡도·승하차)의 <b>기간·최신성 및 평일/주말/공휴일 커버리지</b> 확인 + 갱신(갈아끼기) 주기 결정</li>
+    <li><b>지연·사고일</b> 이상치 처리 규칙 (배차간격 급변 제외 여부)</li>
+    <li><b>노선도 좌표/SVG</b> 확보 (역 좌표 데이터 매핑)</li>
+    <li>시발 감지 <b>신뢰도 검증</b> (회차/입고 열차와 구분)</li>
+  </ul>
+  <div class="callout warn">
+    <p class="c-title">알려진 한계 (정직하게 명시할 것)</p>
+    <p>• 정확한 인원수(명) 불가 → 혼잡도 %로 대체<br>
+       • 예측은 “특정 열차 실측”이 아닌 “시간대 통계 기대값 + 실시간 보정”<br>
+       • 하차궤적·혼잡은 역·시간대 평균 기반이라 개인화 정밀도에 본질적 한계<br>
+       • 9호선·광역철도는 혼잡도 통계 없음 → 위치·도착만</p>
+  </div>
+</section>
+
+<section id="present">
+  <h2 class="sec">14. 발표 포인트</h2>
+  <ul>
+    <li><b>빅데이터 서사</b>: “역별·시간대별 혼잡도·승하차 등 <b>대량의 배치 데이터를 가공·적재</b>하고, 여기에 <b>실시간 열차 위치</b>를 결합해 예측했다. 데이터는 배치로 계속 <b>갈아끼우고 추가</b>하며 갱신된다.” → 데이터 엔지니어링(배치 파이프라인) 역량 어필</li>
+    <li><b>차별점 방어</b>: “SKT/또타지하철도 혼잡도를 보여주지 않나?” → “그들은 <b>현재 상태</b>만, 우리는 <b>예측 + 이번/다음 추천</b>. 상용 서비스가 아니라 공공데이터로 <b>수집→모델→시각화 파이프라인</b>을 구축한 PBL이다.”</li>
+    <li><b>정직한 한계</b>: 실측 부재를 숨기지 않고 검증 방법(공식 통계 대조)과 함께 제시 → 학술적 신뢰</li>
+    <li><b>시연 안전망</b>: 재생 폴백 덕분에 발표 중 네트워크·API 문제에도 시연이 끊기지 않는다.</li>
+  </ul>
+</section>
+
+<footer>
+  <p>이 문서는 프로젝트 인수인계를 위해 작성되었습니다. 세부 스펙 원본: <code>.omc/specs/deep-interview-subway-congestion-live.md</code></p>
+  <p>데이터 출처: 서울 열린데이터광장(data.seoul.go.kr) · 서울시 교통정보과 TOPIS. 모든 subwayId 코드·지원 노선·호출 한도는 사용 전 각 데이터셋 명세서에서 최종 확인 요망.</p>
+</footer>
+
+</div>
+</body>
+</html>
