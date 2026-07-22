@@ -6,6 +6,7 @@ realtime-api-key.txt
 # 데이터 (배치로 재생성 가능)
 data/*.duckdb
 data/*.duckdb.wal
+data/*.log
 data/raw/*
 !data/raw/.gitkeep
 data/snapshots/*
