@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,6 +36,8 @@ from ..naming import (
     normalize_line,
     normalize_station,
 )
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "http://swopenapi.seoul.go.kr/api/subway"
 DEFAULT_START = 0
@@ -271,13 +274,19 @@ class RealtimeClient:
         self._client = client
         self._owns_client = False
         if self._client is None and settings.realtime_enabled:
-            self._client = httpx.Client(timeout=timeout)
+            # 전체 도착(ALL) 조회는 미리 생성된 파일로 307 리다이렉트를 준다
+            # (2026-07-22 실측: Location: .../data/{stamp}.json). 따라가지 않으면
+            # 매번 replay 로 폴백해 arrival_log 가 조용히 비게 된다.
+            self._client = httpx.Client(timeout=timeout, follow_redirects=True)
             self._owns_client = True
         self._clock = clock
         self._now = now
         self._start = start
         self._end = end
         self._cache: dict[tuple[str, str], tuple[float, RealtimeResult]] = {}
+        # 연결 없이 live 관측을 버릴 때 남기는 경고. 호출마다 찍으면 로그가 잠기므로
+        # 인스턴스당 1회만 남긴다. 조용히 버리면 §A(시발 보정 무효)가 다시 숨는다.
+        self._warned_no_log_connection = False
         # replay 는 호출할 때마다 다음 스냅샷으로 넘어간다. 데모에서 화면이 멈춰 보이지 않도록.
         # (kind, key) 별로 따로 돈다. 노선마다 스냅샷 개수가 달라 커서를 공유하면 어긋난다.
         self._replay_cursor: dict[tuple[str, str], int] = {}
@@ -391,8 +400,18 @@ class RealtimeClient:
 
     # -- persistence -------------------------------------------------------
     def _persist(self, result: RealtimeResult) -> None:
-        """live 관측만 로그 테이블에 적재한다. 연결이 없으면 조용히 건너뛴다."""
-        if self._con is None or not result.is_live or not result.records:
+        """live 관측만 로그 테이블에 적재한다. 연결이 없으면 경고를 남기고 건너뛴다."""
+        if not result.is_live or not result.records:
+            return
+        if self._con is None:
+            if not self._warned_no_log_connection:
+                self._warned_no_log_connection = True
+                logger.warning(
+                    "DB 연결이 없어 실시간 관측 로그를 적재하지 않습니다. "
+                    "train_position_log 가 비면 시발(始發) 보정이 항상 비활성화됩니다. "
+                    "로그를 쌓으려면 앱을 내린 뒤 "
+                    "python -m backend.app.etl.capture_snapshots 를 실행하세요."
+                )
             return
         if result.kind == "position":
             self._con.executemany(

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -181,6 +182,15 @@ def write_snapshot(
         encoding="utf-8",
     )
     return path
+
+
+class TestOwnClientConfig:
+    def test_own_client_follows_redirects(self, tmp_path):
+        # ALL 도착 조회가 307 로 미리 생성된 JSON 파일을 가리킨다(실측).
+        # 이 설정이 빠지면 도착 수집 전체가 조용히 replay 로 내려간다.
+        with RealtimeClient(make_settings(tmp_path)) as client:
+            assert client._client is not None
+            assert client._client.follow_redirects is True
 
 
 class TestLiveSuccess:
@@ -502,12 +512,19 @@ class TestPersistence:
         assert result.source == "replay" and result.records
         assert con.execute("SELECT count(*) FROM train_position_log").fetchone()[0] == 0
 
-    def test_no_connection_skips_persistence_silently(self, tmp_path):
+    def test_no_connection_warns_once_and_skips_persistence(self, tmp_path, caplog):
+        # 조회 자체는 성공해야 하지만, live 관측을 버린다는 사실은 숨기면 안 된다.
+        # 이 침묵이 §A(시발 보정 무효)를 오래 숨겼다. 경고는 호출마다가 아니라
+        # 인스턴스당 1회 — 30초 TTL 로 하루 종일 도는 앱에서 로그가 잠기면 안 된다.
         handler = CallCounter(POSITION_PAYLOAD)
-        with make_client(make_settings(tmp_path), handler, con=None) as client:
-            result = client.fetch_positions("2호선")
+        with caplog.at_level(logging.WARNING, logger="backend.app.clients.realtime"):
+            with make_client(make_settings(tmp_path), handler, con=None) as client:
+                result = client.fetch_positions("2호선")
+                client.fetch_positions("3호선")
 
         assert result.source == "live" and len(result.records) == 2
+        warnings = [r for r in caplog.records if "시발" in r.getMessage()]
+        assert len(warnings) == 1
 
 
 class TestReplaySource:

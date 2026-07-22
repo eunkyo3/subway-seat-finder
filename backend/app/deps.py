@@ -33,11 +33,32 @@ class AppState:
         self.con.close()
 
 
+def _warn_if_origin_log_empty(con: duckdb.DuckDBPyConnection) -> None:
+    """위치 로그가 비어 있으면 기동 시점에 알린다.
+
+    앱은 읽기 전용이라 로그를 스스로 쌓지 못한다. 로그가 비면 시발 보정이
+    코드로는 존재해도 한 번도 발동하지 않는데(§A), 이 사실이 어디에도 드러나지
+    않아 오래 숨었다. 침묵 대신 기동 로그 한 줄로 상태를 못박는다.
+    """
+    try:
+        count = con.execute("SELECT count(*) FROM train_position_log").fetchone()[0]
+    except duckdb.CatalogException:
+        # 쓰기 연결이 스키마를 만들기 전의 오래된 DB. 없는 것도 0행과 같다.
+        count = 0
+    if count == 0:
+        logger.warning(
+            "train_position_log 가 비어 있어 시발(始發) 보정이 항상 비활성화됩니다. "
+            "앱을 내린 뒤 python -m backend.app.etl.capture_snapshots 를 실행해 "
+            "열차 위치 로그를 쌓으세요."
+        )
+
+
 def build_state(settings: Settings | None = None) -> AppState:
     settings = settings or load_settings()
 
     if settings.db_path.exists():
         con = connect(settings.db_path, read_only=True)
+        _warn_if_origin_log_empty(con)
     else:
         # ETL 전에도 앱은 떠야 한다. 빈 스키마로 열고 화면이 '데이터 없음'을 보이게 한다.
         logger.warning(
