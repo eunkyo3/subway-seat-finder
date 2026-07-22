@@ -26,9 +26,9 @@ from datetime import timedelta
 from pathlib import Path
 from statistics import median
 
-from ..naming import line_from_subway_id
 from ..config import load_settings
 from ..db import connect
+from ..naming import line_from_subway_id
 from ..predict.signals import DEFAULT_NOMINAL_HEADWAY_MIN, NOMINAL_HEADWAY_MIN
 
 logger = logging.getLogger("calibrate")
@@ -133,7 +133,9 @@ def main(argv: list[str] | None = None) -> int:
     sufficient = [c for c in cells if c["sufficient"]]
 
     logger.info("실측 간격 표본: %d개, 노선×시간대 셀: %d개 (요일=%s)", len(samples), len(cells), args.day_type)
-    logger.info("셀당 최소 표본 %d개 — 미달 셀은 '표본부족'으로 표시하고 제안에서 제외한다.", args.min_samples)
+    # 출력 문자열에 em-dash(U+2014)를 쓰지 않는다. PYTHONUTF8 없는 Windows 콘솔(cp949)은
+    # 이 문자를 인코딩하지 못해 로깅 핸들러가 트레이스백을 뱉는다. 도커는 PYTHONUTF8=1 이라 무관.
+    logger.info("셀당 최소 표본 %d개. 미달 셀은 '표본부족'으로 표시하고 제안에서 제외한다.", args.min_samples)
     logger.info("")
     logger.info("[노선×시간대 실측 중앙값 vs NOMINAL_HEADWAY_MIN]")
     logger.info("  노선    시간   n     실측(분)  기준(분)  편차")
@@ -148,13 +150,13 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("[해석]")
     if not sufficient:
         logger.info(
-            "  모든 셀이 표본 부족이다. 아직 상수를 바꿀 근거가 없다 — 여러 날·"
+            "  모든 셀이 표본 부족이다. 아직 상수를 바꿀 근거가 없다. 여러 날·"
             "피크/비피크에 걸쳐 수집을 반복한 뒤 다시 실행하라."
         )
     else:
         worst = max(sufficient, key=lambda c: abs(c["deviationPct"]))
         logger.info(
-            "  표본 충분 셀 %d개. 최대 편차는 %s %d시 %+.1f%% — 노선 구분 없는 현재"
+            "  표본 충분 셀 %d개. 최대 편차는 %s %d시 %+.1f%%. 노선 구분 없는 현재"
             " 상수의 한계가 수치로 드러난 곳부터 노선별 값으로 나누는 것이 첫 개선이다.",
             len(sufficient), worst["line"], worst["hour"], worst["deviationPct"],
         )
