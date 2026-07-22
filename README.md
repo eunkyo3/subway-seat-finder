@@ -159,11 +159,17 @@ python -m backend.app.etl.run_all --months 202606 202605  # 특정 월 승하차
 python -m backend.app.etl.run_all --skip-stations      # 역 마스터 건너뛰기
 
 python -m backend.app.etl.capture_snapshots --rounds 20 --interval 30
-                                                       # 실시간 스냅샷 녹화 (실시간 키 필요)
+                                                       # 실시간 스냅샷 녹화 + 위치·도착 로그 수집 (실시간 키 필요)
 python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통계 오차 측정
+python -m backend.app.etl.calibrate_headway            # 실측 배차간격 vs 기준 상수 대조 (수집 로그 필요)
 
-./.venv/Scripts/python.exe -m pytest                   # 테스트 (286개)
+./.venv/Scripts/python.exe -m pytest                   # 테스트 (305개)
 ```
+
+`capture_snapshots` 는 **유일한 로그 수집기**이기도 합니다. 앱은 DB를 읽기 전용으로만 열기 때문에
+시발 감지·배차간격 캘리브레이션의 원천인 `train_position_log` / `arrival_log` 는 이 스크립트로만 쌓입니다.
+앱이 DB를 잡고 있으면 스냅샷만 저장되고 로그는 건너뜁니다(경고 출력) — 로그가 목적이면 앱을 내리고
+실행하거나, API 한도를 쓰기 전에 실패하도록 `--require-db` 를 붙이세요.
 
 ### 시연 안전망
 
@@ -209,7 +215,9 @@ python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통
 - **시발 감지는 단정이 아닙니다.** 회차·입고 열차도 중간역에서 처음 관측될 수 있고,
   수집 이력이 짧으면 앞부분이 잘려 시발처럼 보입니다. 그래서 보정계수로만 씁니다.
 - **배차간격 보정계수는 아직 캘리브레이션 전입니다.** 정성적 규칙값이며,
-  실시간 데이터가 쌓이면 튜닝해야 합니다.
+  실시간 데이터가 쌓이면 튜닝해야 합니다. 실측 대비 편차는 `calibrate_headway` 로 측정합니다 —
+  하루치 표본(22시대 1,154개)에서 이미 노선별 편차가 −20%~+80% 로 갈렸습니다.
+  노선 구분 없는 현재 상수의 한계이며, 여러 날 수집 후 노선별 값으로 나누는 것이 첫 개선입니다.
 
 ### 추정 혼잡도의 가정 (공식 파일이 없을 때)
 
@@ -246,8 +254,11 @@ python -m backend.app.etl.validate_estimate
 추정치를 어디까지 믿을 수 있는가*의 상한을 밝히는 것입니다.
 
 남은 검증 항목:
-- 수집한 실시간 데이터로 **"배차간격이 길수록 붐빈다"** 가설을 상관분석으로 검증
-  (위치 로그가 며칠 쌓여야 의미가 생깁니다)
+- `calibrate_headway` 로 **노선×시간대 기준 배차간격**을 실측에서 다시 뽑기
+  (피크·비피크가 모두 들어가도록 여러 날 수집이 선행돼야 합니다)
+- **"배차간격이 길수록 붐빈다"의 민감도(HEADWAY_SENSITIVITY)는 이 데이터로 적합할 수 없습니다.**
+  열차별 혼잡 실측이 없고, 시간대 간 간격-혼잡 상관은 수요가 교란변수라 부호가 반대로 나옵니다
+  (피크에는 배차도 짧고 혼잡도 높음). 근거 없는 값보다 미보정 명시를 유지합니다.
 
 ---
 
@@ -271,8 +282,9 @@ backend/app/
 │   ├── load_flow.py       승하차 (와이드 → 롱)
 │   ├── load_congestion.py 혼잡도 (공식 파일 / 추정)
 │   ├── run_all.py         배치 진입점
-│   ├── capture_snapshots.py  실시간 녹화 (시연 안전망)
-│   └── validate_estimate.py  추정치 vs 공식 통계 오차 측정
+│   ├── capture_snapshots.py  실시간 녹화 (시연 안전망) + 위치·도착 로그 수집
+│   ├── validate_estimate.py  추정치 vs 공식 통계 오차 측정
+│   └── calibrate_headway.py  실측 배차간격 vs 기준 상수 대조
 ├── predict/
 │   ├── baseline.py        기준 혼잡도 + 폴백 계단
 │   ├── signals.py         배차간격 · 시발 감지
@@ -281,6 +293,7 @@ backend/app/
 └── routers/               stations · realtime · predict
 
 frontend/                  Leaflet 대시보드 (번들러 없음, Leaflet은 vendor/에 내장)
+tools/                     운영 스크립트 (피크 시간대 스냅샷 재녹화)
 data/raw/                  ← 혼잡도 엑셀을 여기에
 data/snapshots/            ← 녹화된 실시간 스냅샷
 ```
@@ -315,6 +328,10 @@ data/snapshots/            ← 녹화된 실시간 스냅샷
 **방향 어휘도 세 갈래입니다.** 실시간은 `상행`/코드 `0`, 혼잡도 통계는 `상선`,
 2호선은 `내선`/`외선`. `?direction=상선` 으로 필터하면 후보가 **조용히 0건**이 됩니다.
 → `naming.normalize_direction()` 으로 `상선`/`하선` 에 모읍니다.
+
+**전 역 도착 조회(`ALL`)는 307 리다이렉트를 줍니다** (미리 생성된 JSON 파일로, 2026-07-22 실측).
+httpx 는 기본으로 리다이렉트를 따라가지 않으므로, 설정 없이 부르면 도착 수집 전체가
+**조용히 재생(replay) 폴백**으로 내려가 `arrival_log` 가 비어 있게 됩니다. → `follow_redirects=True`.
 
 ### 혼잡도 소스는 역 단위로 고릅니다
 
