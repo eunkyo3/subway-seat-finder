@@ -52,15 +52,26 @@ def extract_headways(con, day_type: str) -> list[tuple[str, int, float]]:
 
     시간대는 수집 시각이 아니라 **도착 예정 시각**(collected_at + eta)으로
     버킷한다. 07:58 에 수집해도 08:03 도착이면 8시대 배차다.
+
+    표본 유효성 두 가지를 지킨다.
+    - eta=0 은 arrival_code 가 진입('0')/도착('1')일 때만 진짜 0초다. 컬럼 도입
+      전 행(NULL)의 0 은 '카운트다운 미상'일 가능성이 높아 제외한다 — 미상 0 과
+      다음 열차의 차이는 배차간격이 아니라 노이즈다.
+    - 30초 폴링마다 같은 열차쌍의 간격이 반복 관측된다. 그대로 다 세면 표본 n 이
+      부풀어 최소 표본 판정이 실제보다 후해지므로, 물리적으로 같은 간격
+      (같은 역·방향·열차쌍·시간대)은 한 번만 센다.
     """
     rows = con.execute(
         "SELECT collected_at, subway_id, station_name, direction, train_no, arrival_eta_sec"
         " FROM arrival_log"
-        " WHERE train_no <> '' AND arrival_eta_sec IS NOT NULL AND collected_at IS NOT NULL"
+        " WHERE train_no <> '' AND collected_at IS NOT NULL"
+        "   AND arrival_eta_sec IS NOT NULL"
+        "   AND (arrival_eta_sec > 0 OR arrival_code IN ('0', '1'))"
         " ORDER BY collected_at, subway_id, station_name, direction, arrival_eta_sec"
     ).fetchall()
 
     samples: list[tuple[str, int, float]] = []
+    seen: set[tuple] = set()
     prev_key = None
     prev_eta = None
     prev_train = None
@@ -76,7 +87,13 @@ def extract_headways(con, day_type: str) -> list[tuple[str, int, float]]:
             gap = float(eta_sec - prev_eta)
             if 0 < gap <= MAX_HEADWAY_SEC:
                 arrival_at = collected_at + timedelta(seconds=float(eta_sec))
-                samples.append((line, arrival_at.hour, gap))
+                dedup_key = (
+                    line, station, direction, prev_train, train_no,
+                    arrival_at.date(), arrival_at.hour,
+                )
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    samples.append((line, arrival_at.hour, gap))
         prev_key, prev_eta, prev_train = key, eta_sec, train_no
     return samples
 

@@ -40,12 +40,14 @@ def add_arrival(
     subway_id: str = "1002",
     station: str = "강남",
     direction: str = "상선",
+    arrival_code: str | None = None,
 ) -> None:
     con.execute(
         "INSERT INTO arrival_log (subway_id, station_id, station_name, train_no,"
-        " arrival_eta_sec, express_yn, terminal_station, direction, collected_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [subway_id, "1002000230", station, train_no, eta_sec, False, "성수", direction, collected_at],
+        " arrival_eta_sec, arrival_code, express_yn, terminal_station, direction, collected_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [subway_id, "1002000230", station, train_no, eta_sec, arrival_code,
+         False, "성수", direction, collected_at],
     )
 
 
@@ -109,6 +111,32 @@ class TestExtractHeadways:
 
         assert extract_headways(con, "평일") == []
         assert extract_headways(con, "토요일") == [("2호선", 8, 300.0)]
+
+    def test_ambiguous_zero_eta_is_excluded(self, con):
+        # arrival_code 도입 전 로그의 eta=0 은 '카운트다운 미상'일 가능성이 높다.
+        # 미상 0 과 다음 열차의 차이는 배차간격이 아니라 노이즈다.
+        add_arrival(con, train_no="2101", eta_sec=0)  # arrival_code NULL
+        add_arrival(con, train_no="2103", eta_sec=300)
+
+        assert extract_headways(con, "평일") == []
+
+    def test_genuine_zero_eta_counts(self, con):
+        # 도착 코드('1')가 붙은 0초는 진짜 도착 직전이므로 정상 표본이다.
+        add_arrival(con, train_no="2101", eta_sec=0, arrival_code="1")
+        add_arrival(con, train_no="2103", eta_sec=300)
+
+        assert extract_headways(con, "평일") == [("2호선", 8, 300.0)]
+
+    def test_repeated_observation_of_same_pair_counted_once(self, con):
+        # 30초 폴링마다 같은 열차쌍 간격이 다시 관측된다. 그대로 다 세면
+        # 표본 n 이 부풀어 최소 표본 판정이 실제보다 후해진다.
+        add_arrival(con, train_no="2101", eta_sec=60, collected_at=WEEKDAY)
+        add_arrival(con, train_no="2103", eta_sec=360, collected_at=WEEKDAY)
+        later = WEEKDAY.replace(second=30)
+        add_arrival(con, train_no="2101", eta_sec=30, collected_at=later)
+        add_arrival(con, train_no="2103", eta_sec=330, collected_at=later)
+
+        assert extract_headways(con, "평일") == [("2호선", 8, 300.0)]
 
 
 class TestSummarize:
