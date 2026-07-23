@@ -94,7 +94,9 @@ def predict_train(
         reasons.append(
             f"중간역 시발 열차 (출발 {origin.stations_since_origin}정거장 전) — 비어서 들어옵니다"
         )
-    if base.resolution != "exact":
+    if base.resolution == "none":
+        reasons.append("이 노선의 혼잡도 통계가 없어 기준값을 구하지 못했습니다")
+    elif base.resolution != "exact":
         reasons.append("이 역·시간대 통계가 없어 인접 범위 평균을 썼습니다")
     if base.is_estimated and base.source != "none":
         reasons.append("공식 혼잡도 파일이 없어 승하차 기반 추정치를 썼습니다")
@@ -158,6 +160,7 @@ def compare_trains(
         wait_min = None
         if next_train.eta_sec is not None and this_train.eta_sec is not None:
             wait_min = max((next_train.eta_sec - this_train.eta_sec) // 60, 0)
+        # 0분(1분 미만 간격)은 "0분만 더 기다리면"이 이상하므로 의도적으로 생략한다.
         wait_text = f" {wait_min}분만 더 기다리면 됩니다." if wait_min else ""
         return Recommendation(
             verdict=VERDICT_TAKE_NEXT,

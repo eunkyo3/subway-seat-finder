@@ -317,6 +317,17 @@ class TestPredictTrain:
         )
         assert prediction.load_factor == pytest.approx(ORIGIN_EMPTY_FACTOR, rel=1e-3)
 
+    def test_no_stats_reason_is_honest_not_fallback_wording(self, con):
+        # 통계가 한 줄도 없으면(resolution 'none') "인접 범위 평균을 썼다"는
+        # 거짓말이 된다 — 실제로는 아무것도 못 찾았다.
+        prediction = predict_train(
+            con, line="2호선", station="강남", when=MORNING, direction="상선"
+        )
+        assert prediction.baseline_resolution == "none"
+        joined = " ".join(prediction.reasons)
+        assert "기준값을 구하지 못했습니다" in joined
+        assert "인접 범위" not in joined
+
 
 class TestCompareTrains:
     def _prediction(self, con, pct, eta=None):
@@ -367,6 +378,14 @@ class TestCompareTrains:
         result = compare_trains(this_train, None, similar_threshold_pct=8)
         assert result.verdict == VERDICT_TAKE_THIS
         assert result.next_train is None
+
+    def test_sub_minute_wait_omits_wait_wording(self, con):
+        # 1분 미만 간격은 "0분만 더 기다리면"이 되므로 대기 문구를 뺀다.
+        this_train = self._prediction(con, 160.0, eta=60)
+        next_train = self._prediction(con, 100.0, eta=90)
+        result = compare_trains(this_train, next_train, similar_threshold_pct=8)
+        assert result.verdict == VERDICT_TAKE_NEXT
+        assert "기다리면" not in result.message
 
 
 class TestSeatTimeline:

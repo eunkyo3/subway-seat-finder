@@ -18,6 +18,7 @@ from backend.app.config import Settings
 from backend.app.db import init_schema
 from backend.app.deps import AppState
 from backend.app.main import app
+from backend.app.routers.predict import _origin_signal, _terminal_names
 
 
 class FakeRealtime:
@@ -426,6 +427,69 @@ class TestPredictStation:
         body = client.get("/api/predict/station/강남", params={"line": "5호선", "at": AT}).json()
         assert body["source"] == "replay"
 
+    def test_arriving_now_train_is_this_train(self, make_client):
+        # eta 0(도착 직전)은 가장 가까운 열차다. `or` 정렬은 0 이 falsy 라
+        # 이 열차를 가장 먼 것으로 밀어 이번/다음 비교를 통째로 뒤집었다.
+        client = self._client(
+            make_client, [arrival("LATER", 300), arrival("NOW", 0)]
+        )
+        body = client.get(
+            "/api/predict/station/강남", params={"line": "5호선", "direction": "상선", "at": AT}
+        ).json()
+        assert body["thisTrain"]["trainNo"] == "NOW"
+        assert body["nextTrain"]["trainNo"] == "LATER"
+
+    def test_unknown_eta_sorts_last(self, make_client):
+        client = self._client(
+            make_client, [arrival("MYSTERY", None), arrival("KNOWN", 300)]
+        )
+        body = client.get(
+            "/api/predict/station/강남", params={"line": "5호선", "direction": "상선", "at": AT}
+        ).json()
+        assert body["thisTrain"]["trainNo"] == "KNOWN"
+
+    def test_missing_stats_is_prediction_unavailable_not_zero(self, make_client):
+        # 예측 대상 노선(1~8호선)인데 통계가 한 줄도 없으면(ETL 미실행)
+        # 기준 0% 를 '여유'로 단정하지 말고 예측 불가를 명시해야 한다.
+        client = self._client(
+            make_client, [arrival("3001", 90, line="3호선", station="원흥")]
+        )
+        client.app.state.app_state.con.execute(
+            "INSERT INTO station_master (station_key, name, name_norm, line, seq,"
+            " branch_no, lat, lng) VALUES ('3호선|원흥','원흥','원흥','3호선',1,0,37.6,126.9)"
+        )
+        body = client.get(
+            "/api/predict/station/원흥", params={"line": "3호선", "at": AT}
+        ).json()
+        assert body["predictionAvailable"] is False
+        assert body["thisTrain"] is None
+        assert "통계" in body["reason"]
+        assert body["arrivals"][0]["trainNo"] == "3001"
+
+    def test_origin_lookback_follows_at_parameter(self, make_client):
+        # at 으로 과거를 재생·검증할 때 시발 감지가 현재 시각 기준 3시간 창을 보면
+        # 그 시점의 로그를 놓친다. 기준 시각은 at 이어야 한다.
+        client = self._client(make_client, [arrival("T77", 120)])
+        con = client.app.state.app_state.con
+        sightings = (
+            ("역삼", datetime(2026, 7, 21, 7, 50)),
+            ("강남", datetime(2026, 7, 21, 8, 10)),
+        )
+        for station, seen_at in sightings:
+            con.execute(
+                "INSERT INTO train_position_log (subway_id, train_no, station_id,"
+                " station_name, direction, express_yn, terminal_station,"
+                " position_status, reception_dt, collected_at)"
+                " VALUES ('1005','T77','x',?,'상선',false,'','도착',?,?)",
+                [station, seen_at, seen_at],
+            )
+        body = client.get(
+            "/api/predict/station/강남", params={"line": "5호선", "direction": "상선", "at": AT}
+        ).json()
+        origin = body["thisTrain"]["origin"]
+        assert origin["midLineOrigin"] is True
+        assert origin["stationsSinceOrigin"] == 1  # 역삼(seq3) -> 강남(seq2)
+
 
 class TestSeatTimeline:
     def test_timeline_returned_when_destination_given(self, make_client):
@@ -475,3 +539,63 @@ class TestFrontendServing:
         response = make_client().get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
+
+
+class TestOriginSignalHelpers:
+    """시발 감지의 거리·종점 계산. 순환선 되돌이 지점과 지선 종점이 함정이다."""
+
+    @pytest.fixture()
+    def con(self):
+        connection = duckdb.connect(":memory:")
+        init_schema(connection)
+        # 순환 본선 10역(본1~본10) + 지선 2역(지1~지2). 2호선은 LOOP_LINES 소속.
+        for seq in range(1, 11):
+            connection.execute(
+                "INSERT INTO station_master (station_key, name, name_norm, line,"
+                " seq, branch_no, lat, lng) VALUES (?,?,?,?,?,0,37.5,127.0)",
+                [f"2호선|본{seq}", f"본{seq}", f"본{seq}", "2호선", seq],
+            )
+        for seq, name in ((11, "지1"), (12, "지2")):
+            connection.execute(
+                "INSERT INTO station_master (station_key, name, name_norm, line,"
+                " seq, branch_no, lat, lng) VALUES (?,?,?,?,?,1,37.5,127.0)",
+                [f"2호선|{name}", name, name, "2호선", seq],
+            )
+        yield connection
+        connection.close()
+
+    def _log(self, con, train_no, station, seen_at):
+        con.execute(
+            "INSERT INTO train_position_log (subway_id, train_no, station_id,"
+            " station_name, direction, express_yn, terminal_station,"
+            " position_status, reception_dt, collected_at)"
+            " VALUES ('1002',?,'x',?,'상선',false,'','도착',?,?)",
+            [train_no, station, seen_at, seen_at],
+        )
+
+    def test_terminals_include_branch_endpoints(self, con):
+        # 본선 양끝만 알면 지선 종착역에서 정상 출발한 열차를 시발로 오인한다.
+        assert {"본1", "본10", "지1", "지2"} <= _terminal_names(con, "2호선")
+
+    def test_loop_distance_crosses_the_seam(self, con):
+        # 본9 시발 열차가 본10 을 지나 본1 에 도착: 실제 2정거장이다.
+        # abs(seq 차)=8 로 세면 회복 진행도가 즉시 포화돼 시발 보정이 무효가 된다.
+        base = datetime(2026, 7, 21, 8, 0)
+        self._log(con, "T1", "본9", base)
+        self._log(con, "T1", "본1", datetime(2026, 7, 21, 8, 10))
+
+        is_mid, since = _origin_signal(
+            con, "2호선", "T1", now=datetime(2026, 7, 21, 8, 15)
+        )
+        assert is_mid is True
+        assert since == 2
+
+    def test_branch_terminal_origin_is_not_mid_line(self, con):
+        self._log(con, "T2", "지2", datetime(2026, 7, 21, 8, 0))
+        self._log(con, "T2", "본5", datetime(2026, 7, 21, 8, 10))
+
+        is_mid, since = _origin_signal(
+            con, "2호선", "T2", now=datetime(2026, 7, 21, 8, 15)
+        )
+        assert is_mid is False
+        assert since is None
