@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -125,6 +125,51 @@ def _age_sec(reception_dt: datetime | None, now: datetime) -> float | None:
     return delta if delta > 0 else 0.0
 
 
+# live 도착 레코드의 신선도 한계. 운행 중에는 recptnDt 가 수십 초 안에 갱신되므로
+# 이보다 오래된 레코드는 원천이 갱신을 멈춘 것이다(막차 이후 등).
+ARRIVAL_MAX_AGE_SEC = 600.0
+# ETA 에서 나이를 뺀 값이 이보다 더 음수면 이미 도착해 떠난 열차로 본다.
+# 약간의 음수는 시계 오차·정차 시간일 수 있어 0 으로 접어 남긴다.
+ARRIVAL_EXPIRY_GRACE_SEC = 30.0
+
+
+def filter_live_arrivals(
+    records: list[dict[str, Any]],
+    *,
+    max_age_sec: float = ARRIVAL_MAX_AGE_SEC,
+    grace_sec: float = ARRIVAL_EXPIRY_GRACE_SEC,
+) -> list[dict[str, Any]]:
+    """live 도착 레코드에서 지나간 열차를 걸러내고 ETA 를 데이터 나이만큼 당긴다.
+
+    barvlDt 는 recptnDt 시점 기준 카운트다운이다. 운행이 끝나 원천이 갱신을 멈추면
+    수십 분 전의 '3분 후 도착'이 그대로 남아, 열차가 안 오는데도 도착 예정이 뜬다.
+    그래서 (1) 나이가 max_age 를 넘은 레코드는 통째로 버리고, (2) ETA 가 있는
+    레코드는 나이를 빼서 시간을 흘려보내되, grace 를 넘겨 음수가 된 것은 버린다.
+
+    replay 레코드에는 적용하지 않는다 — 재생은 과거 시점을 그대로 보여주는 것이
+    목적이라, 나이를 반영하면 스냅샷 전체가 만료돼 데모가 빈 화면이 된다.
+    적재(_persist)보다 뒤에 불러야 한다. 로그에는 보정 전 원시 ETA 가 남아야
+    캘리브레이션이 수집 시각 기준으로 일관되게 계산된다.
+    """
+    kept: list[dict[str, Any]] = []
+    for record in records:
+        age = record.get("age_sec")
+        if age is None or age <= 0:
+            kept.append(record)
+            continue
+        if age > max_age_sec:
+            continue
+        eta = record.get("eta_sec")
+        if eta is None:
+            kept.append(record)
+            continue
+        effective = eta - age
+        if effective < -grace_sec:
+            continue
+        kept.append({**record, "eta_sec": max(int(effective), 0)})
+    return kept
+
+
 def _is_express(raw: Any) -> bool:
     return str(raw or "").strip() in _EXPRESS_TRUE
 
@@ -138,12 +183,29 @@ def _direction(raw: Any) -> str:
     return normalize_direction(raw)
 
 
-def _to_int(raw: Any) -> int:
-    text = str(raw or "").strip()
+# barvlDt=0 을 '도착 직전'으로 인정할 수 있는 arvlCd. 0=당역 진입, 1=당역 도착.
+_ETA_ZERO_VALID_CODES = frozenset({"0", "1"})
+
+
+def _eta_sec(row: dict[str, Any]) -> int | None:
+    """barvlDt(도착까지 남은 초)를 읽는다. 0 은 뜻이 둘이라 arvlCd 로 가른다.
+
+    실측: 전 역 일괄(ALL) 응답의 절반 이상이 barvlDt=0 인데, 대부분은 카운트다운
+    정보가 없다는 뜻이다. 진짜 0초(도착 직전)는 arvlCd 가 진입/도착일 때뿐이다.
+    이 둘을 한 값 0 으로 뭉개면 후보 정렬(0 이 falsy 라 가장 먼 열차 취급),
+    배차간격, 캘리브레이션 표본이 전부 오염된다. 모르면 None 으로 정직하게 둔다.
+    """
+    raw = row.get("barvlDt")
+    text = "" if raw is None else str(raw).strip()
     try:
-        return int(float(text))
+        eta = int(float(text))
     except ValueError:
+        return None
+    if eta > 0:
+        return eta
+    if eta == 0 and str(row.get("arvlCd") or "").strip() in _ETA_ZERO_VALID_CODES:
         return 0
+    return None
 
 
 def _extract_envelope(payload: dict[str, Any]) -> tuple[str, str]:
@@ -231,7 +293,7 @@ def _normalize_arrival(row: dict[str, Any], now: datetime) -> dict[str, Any]:
         "express": _is_express(row.get("btrainSttus") or row.get("directAt")),
         "last_train": str(row.get("lstcarAt") or "") == "1",
         "terminal_station": _terminal_name(row.get("bstatnNm")),
-        "eta_sec": _to_int(row.get("barvlDt")),
+        "eta_sec": _eta_sec(row),
         "arrival_message": str(row.get("arvlMsg2") or ""),
         "arrival_code": str(row.get("arvlCd") or ""),
         "reception_dt": reception_dt,
@@ -364,7 +426,12 @@ class RealtimeClient:
                     records=normalize_rows(rows, kind, now),
                     payload=payload,
                 )
+                # 원시 ETA 를 먼저 적재한 뒤, 서빙 목록에서만 지나간 열차를 거른다.
                 self._persist(result)
+                if kind == "arrival":
+                    result = replace(
+                        result, records=filter_live_arrivals(result.records)
+                    )
         else:
             result = self._replay(kind, cache_key, now)
 
@@ -439,8 +506,8 @@ class RealtimeClient:
             self._con.executemany(
                 "INSERT INTO arrival_log"
                 " (subway_id, station_id, station_name, train_no, arrival_eta_sec,"
-                "  express_yn, terminal_station, direction, collected_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  arrival_code, express_yn, terminal_station, direction, collected_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     [
                         r["subway_id"],
@@ -448,6 +515,7 @@ class RealtimeClient:
                         r["station_name"],
                         r["train_no"],
                         r["eta_sec"],
+                        r["arrival_code"],
                         r["express"],
                         r["terminal_station"],
                         r["direction"],

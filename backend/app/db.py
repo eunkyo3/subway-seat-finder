@@ -79,6 +79,7 @@ SCHEMA_STATEMENTS = (
         station_name     VARCHAR,
         train_no         VARCHAR,
         arrival_eta_sec  INTEGER,
+        arrival_code     VARCHAR,   -- arvlCd. eta=0 이 '도착'인지 '미상'인지 가른다
         express_yn       BOOLEAN,
         terminal_station VARCHAR,
         direction        VARCHAR,
@@ -96,6 +97,20 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """스키마를 생성한다. 여러 번 실행해도 안전하다."""
     for statement in SCHEMA_STATEMENTS:
         con.execute(statement)
+    _migrate(con)
+
+
+def _migrate(con: duckdb.DuckDBPyConnection) -> None:
+    """CREATE IF NOT EXISTS 로는 기존 테이블에 컬럼이 안 붙는다. 빠진 컬럼을 채운다.
+
+    arrival_code 도입 전에 수집된 행은 NULL 로 남는다 — eta=0 의 뜻을 사후에
+    복원할 수 없으므로, 소비자(캘리브레이션)는 NULL+0 행을 모호한 것으로 제외한다.
+    """
+    columns = {
+        row[1] for row in con.execute("PRAGMA table_info('arrival_log')").fetchall()
+    }
+    if "arrival_code" not in columns:
+        con.execute("ALTER TABLE arrival_log ADD COLUMN arrival_code VARCHAR")
 
 
 def bulk_insert(

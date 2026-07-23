@@ -110,6 +110,13 @@ ERROR_338_PAYLOAD = {
 }
 
 
+def arrival_payload_with(**overrides) -> dict:
+    """ARRIVAL_PAYLOAD 의 첫 행 필드만 바꾼 깊은 복사본."""
+    payload = json.loads(json.dumps(ARRIVAL_PAYLOAD))
+    payload["realtimeArrivalList"][0].update(overrides)
+    return payload
+
+
 def make_settings(tmp_path: Path, *, key: str | None = "RT-KEY", ttl: int = 30) -> Settings:
     return Settings(
         api_key="GENERAL-KEY",
@@ -226,7 +233,9 @@ class TestLiveSuccess:
 
         assert result.source == "live"
         record = result.records[0]
-        assert record["eta_sec"] == 90 and isinstance(record["eta_sec"], int)
+        # barvlDt=90 은 recptnDt(09:00:10) 기준이다. NOW(09:00:20)까지 10초가
+        # 흘렀으므로 서빙 ETA 는 80초 — 나이를 안 빼면 시간이 멈춘 카운트다운이 된다.
+        assert record["eta_sec"] == 80 and isinstance(record["eta_sec"], int)
         assert record["arrival_message"] == "전역 출발"
         assert record["station_name"] == "강남"
         assert record["line"] == "2호선"
@@ -525,6 +534,91 @@ class TestPersistence:
         assert result.source == "live" and len(result.records) == 2
         warnings = [r for r in caplog.records if "시발" in r.getMessage()]
         assert len(warnings) == 1
+
+
+class TestArrivalEtaDisambiguation:
+    """barvlDt=0 은 '도착 직전'과 '카운트다운 미상'을 겸한다 (실측: 하루치 로그의
+    59%가 0). arvlCd 로 갈라 미상은 None 으로 둬야 후보 정렬(0 은 falsy)·
+    배차간격·캘리브레이션 표본이 오염되지 않는다."""
+
+    def _record(self, tmp_path, **overrides):
+        handler = CallCounter(arrival_payload_with(**overrides))
+        with make_client(make_settings(tmp_path), handler) as client:
+            records = client.fetch_arrivals("강남").records
+        return records[0] if records else None
+
+    def test_zero_with_countdown_unknown_code_is_none(self, tmp_path):
+        record = self._record(tmp_path, barvlDt="0", arvlCd="99")
+        assert record["eta_sec"] is None
+
+    def test_zero_while_arriving_is_genuine_zero(self, tmp_path):
+        record = self._record(tmp_path, barvlDt="0", arvlCd="1")
+        assert record["eta_sec"] == 0
+
+    def test_numeric_zero_while_approaching_is_genuine_zero(self, tmp_path):
+        # 스냅샷을 손으로 만들면 barvlDt 가 숫자 0 으로 올 수 있다.
+        # falsy 라고 결측 취급하면 도착 직전 열차가 사라진다.
+        record = self._record(tmp_path, barvlDt=0, arvlCd="0")
+        assert record["eta_sec"] == 0
+
+    def test_missing_barvlDt_is_none(self, tmp_path):
+        record = self._record(tmp_path, barvlDt="", arvlCd="3")
+        assert record["eta_sec"] is None
+
+
+class TestStaleArrivalGhosts:
+    """운행 종료 후 원천이 recptnDt 갱신을 멈추면, 열차가 안 오는데도 오래된
+    '몇 분 후 도착'이 남는다(유령 도착). live 서빙은 데이터 나이만큼 시간을
+    흘려보내고, 이미 지나간 열차와 죽은 원천을 걸러낸다."""
+
+    def test_departed_train_is_dropped(self, tmp_path):
+        # 5분 전 기준 '60초 후 도착'. 유예(30초)를 훨씬 넘겨 이미 떠난 열차다.
+        payload = arrival_payload_with(barvlDt="60", recptnDt="2026-07-21 08:55:20")
+        with make_client(make_settings(tmp_path), CallCounter(payload)) as client:
+            assert client.fetch_arrivals("강남").records == []
+
+    def test_dead_source_is_dropped_even_without_eta(self, tmp_path):
+        # ETA 미상이라도 원천이 10분 넘게 침묵하면 죽은 데이터다.
+        payload = arrival_payload_with(
+            barvlDt="0", arvlCd="99", recptnDt="2026-07-21 08:40:00"
+        )
+        with make_client(make_settings(tmp_path), CallCounter(payload)) as client:
+            assert client.fetch_arrivals("강남").records == []
+
+    def test_slightly_late_record_is_clamped_not_dropped(self, tmp_path):
+        # 유예 안쪽의 음수는 시계 오차·정차 시간일 수 있어 '지금 도착'으로 접는다.
+        payload = arrival_payload_with(barvlDt="5", recptnDt="2026-07-21 09:00:00")
+        with make_client(make_settings(tmp_path), CallCounter(payload)) as client:
+            (record,) = client.fetch_arrivals("강남").records
+        assert record["eta_sec"] == 0
+
+    def test_replay_is_not_age_filtered(self, tmp_path):
+        # 재생은 과거 시점을 그대로 보여주는 게 목적이다. 나이를 반영하면
+        # 스냅샷 전체가 만료돼 데모가 빈 화면이 된다.
+        settings = make_settings(tmp_path)
+        write_snapshot(settings, "arrival", ARRIVAL_PAYLOAD, key="강남")
+        with make_client(settings, CallCounter(ERROR_338_PAYLOAD)) as client:
+            result = client.fetch_arrivals("강남")
+        assert result.source == "replay"
+        assert result.records and result.records[0]["eta_sec"] == 90
+
+    def test_raw_eta_and_arrival_code_are_persisted(self, tmp_path):
+        # 로그에는 보정 전 원시 ETA 가 남아야 캘리브레이션이 수집 시각 기준으로
+        # 일관되고, arrival_code 가 있어야 eta=0 의 뜻을 사후에 가릴 수 있다.
+        con = duckdb.connect(":memory:")
+        init_schema(con)
+        try:
+            with make_client(
+                make_settings(tmp_path), CallCounter(ARRIVAL_PAYLOAD), con=con
+            ) as client:
+                (record,) = client.fetch_arrivals("강남").records
+            assert record["eta_sec"] == 80  # 서빙은 나이 보정
+            row = con.execute(
+                "SELECT arrival_eta_sec, arrival_code FROM arrival_log"
+            ).fetchone()
+        finally:
+            con.close()
+        assert row == (90, "3")
 
 
 class TestReplaySource:

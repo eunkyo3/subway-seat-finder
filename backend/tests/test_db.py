@@ -72,3 +72,28 @@ def test_station_master_primary_key_blocks_duplicates():
 def test_schema_statement_count_matches_tables_and_indexes():
     # DDL 을 지우고도 테스트가 통과하는 일이 없게 개수를 고정한다.
     assert len(SCHEMA_STATEMENTS) == 9
+
+
+def test_init_schema_adds_arrival_code_to_legacy_table():
+    # CREATE IF NOT EXISTS 는 기존 테이블에 새 컬럼을 붙이지 못한다.
+    # arrival_code 도입 전에 만들어진 DB 도 행 손실 없이 승격돼야 한다.
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE arrival_log ("
+        " subway_id VARCHAR, station_id VARCHAR, station_name VARCHAR,"
+        " train_no VARCHAR, arrival_eta_sec INTEGER, express_yn BOOLEAN,"
+        " terminal_station VARCHAR, direction VARCHAR, collected_at TIMESTAMP)"
+    )
+    con.execute(
+        "INSERT INTO arrival_log VALUES"
+        " ('1002','x','강남','2101',60,false,'성수','상선',TIMESTAMP '2026-07-22 08:00:00')"
+    )
+
+    init_schema(con)
+
+    columns = {r[1] for r in con.execute("PRAGMA table_info('arrival_log')").fetchall()}
+    assert "arrival_code" in columns
+    # 기존 행은 남고, 복원 불가능한 arrival_code 는 NULL 로 정직하게 비운다.
+    assert con.execute(
+        "SELECT count(*), max(arrival_code) FROM arrival_log"
+    ).fetchone() == (1, None)
