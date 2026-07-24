@@ -91,9 +91,15 @@ def origin_factor(
 
     중간역에서 출발한 열차는 비어 있다. 출발 직후가 가장 비고, 정거장을 지날수록
     평상시 수준으로 돌아온다. 정상 종점 시발은 이미 통계에 반영돼 있으므로 보정하지 않는다.
+
+    감지는 됐는데 거리를 모르면(시발역이 지선에 있는 경우 등) 보정하지 않되
+    감지 사실은 보존한다. False 로 접으면 API 라벨과 사유 문구까지 사라져,
+    실제로 비어서 들어오는 열차가 아무 표시 없이 '정상'으로 나간다.
     """
-    if not is_mid_line_origin or stations_since_origin is None:
+    if not is_mid_line_origin:
         return OriginSignal(False, stations_since_origin, 1.0)
+    if stations_since_origin is None:
+        return OriginSignal(True, None, 1.0)
 
     progress = min(max(stations_since_origin, 0) / ORIGIN_RECOVERY_STATIONS, 1.0)
     factor = ORIGIN_EMPTY_FACTOR + (1.0 - ORIGIN_EMPTY_FACTOR) * progress

@@ -208,8 +208,12 @@ class TestOriginSignal:
         assert signal.factor == 1.0
         assert signal.is_mid_line_origin is False
 
-    def test_unknown_distance_is_neutral(self):
-        assert origin_factor(None, is_mid_line_origin=True).factor == 1.0
+    def test_unknown_distance_is_neutral_but_detection_survives(self):
+        # 거리를 몰라도 감지 사실을 False 로 접으면 안 된다 — 라벨과 사유가 사라진다.
+        signal = origin_factor(None, is_mid_line_origin=True)
+        assert signal.factor == 1.0
+        assert signal.is_mid_line_origin is True
+        assert signal.stations_since_origin is None
 
 
 class TestDetectOrigin:
@@ -293,6 +297,20 @@ class TestPredictTrain:
         joined = " ".join(prediction.reasons)
         assert "간격" in joined
         assert "시발" in joined
+
+    def test_mid_line_origin_with_unknown_distance_is_labeled_not_corrected(self, con):
+        # 시발은 감지됐는데 거리를 못 구한 경우(시발역이 지선 등) — 값은 무보정,
+        # 감지 라벨과 사유는 유지돼야 하고 "None정거장" 같은 문구가 새면 안 된다.
+        add_congestion(con, "2호선", "강남", 100.0)
+        prediction = predict_train(
+            con, line="2호선", station="강남", when=MORNING, direction="상선",
+            stations_since_origin=None, is_mid_line_origin=True,
+        )
+        assert prediction.expected_pct == 100.0
+        assert prediction.origin.is_mid_line_origin is True
+        joined = " ".join(prediction.reasons)
+        assert "중간역 시발" in joined
+        assert "None" not in joined
 
     def test_estimated_source_is_disclosed(self, con):
         add_congestion(con, "2호선", "강남", 100.0, source="estimated")

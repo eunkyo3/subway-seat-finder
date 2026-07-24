@@ -91,9 +91,12 @@ def predict_train(
         elif head.factor < 0.98:
             reasons.append(f"앞 열차와 {gap_min:.1f}분 간격으로 촘촘합니다")
     if origin.is_mid_line_origin:
-        reasons.append(
-            f"중간역 시발 열차 (출발 {origin.stations_since_origin}정거장 전) — 비어서 들어옵니다"
-        )
+        if origin.stations_since_origin is None:
+            reasons.append("중간역 시발로 보이는 열차 — 출발 거리를 몰라 보정 없이 표시만 합니다")
+        else:
+            reasons.append(
+                f"중간역 시발 열차 (출발 {origin.stations_since_origin}정거장 전) — 비어서 들어옵니다"
+            )
     if base.resolution == "none":
         reasons.append("이 노선의 혼잡도 통계가 없어 기준값을 구하지 못했습니다")
     elif base.resolution != "exact":
