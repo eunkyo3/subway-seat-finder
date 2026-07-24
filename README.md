@@ -163,7 +163,7 @@ python -m backend.app.etl.capture_snapshots --rounds 20 --interval 30
 python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통계 오차 측정
 python -m backend.app.etl.calibrate_headway            # 실측 배차간격 vs 기준 상수 대조 (수집 로그 필요)
 
-./.venv/Scripts/python.exe -m pytest                   # 테스트 (327개)
+./.venv/Scripts/python.exe -m pytest                   # 테스트 (329개)
 ```
 
 `capture_snapshots` 는 **유일한 로그 수집기**이기도 합니다. 앱은 DB를 읽기 전용으로만 열기 때문에
@@ -225,6 +225,11 @@ python -m backend.app.etl.calibrate_headway            # 실측 배차간격 vs 
   노선별 편차가 −20%~+75% 로 갈렸습니다. (정제 전에는 1,154개로 집계됐지만
   43%가 '카운트다운 미상'의 0초와 같은 간격의 재관측이었습니다 — 부풀려진 표본입니다.)
   노선 구분 없는 현재 상수의 한계이며, 여러 날 수집 후 노선별 값으로 나누는 것이 첫 개선입니다.
+- **시발 보정계수도 미보정 정성값입니다.** "빈 열차 0.25배가 6정거장에 걸쳐 1.0 으로
+  회복한다"는 정성적 가정이며, 열차별 재차 실측이 없어 현재 데이터로는 적합할 수 없습니다.
+  예측을 가장 크게 깎는 단일 레버(최대 −75%)이므로, 근거 없는 값을 만들어 넣는 대신
+  미보정임을 명시합니다. 시발 감지가 됐지만 출발 거리를 못 구한 경우는 보정 없이
+  감지 사실만 표시합니다.
 
 ### 추정 혼잡도의 가정 (공식 파일이 없을 때)
 
