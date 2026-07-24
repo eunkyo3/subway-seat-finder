@@ -5,7 +5,8 @@
 
 시간도 같이 흐른다. 10정거장이면 20분쯤 걸리므로 뒤쪽 정거장은 기준 혼잡도를
 그 시각의 통계에서 읽어야 한다. 이걸 빼먹으면 퇴근 첨두에 탄 열차가 계속
-첨두 혼잡도인 채로 남는다.
+첨두 혼잡도인 채로 남는다. 자정을 넘으면 요일도 같이 넘어간다 — 금요일 심야에
+탄 열차의 자정 이후 정거장은 토요일 통계를 읽어야 한다.
 """
 
 from __future__ import annotations
@@ -112,14 +113,15 @@ def build_seat_timeline(
     if not stops_meta:
         return SeatTimeline([], None, "none")
 
-    day_type = day_type_of(departure)
     stops: list[TimelineStop] = []
     sources: set[str] = set()
 
     for offset, (seq, name, station_key) in enumerate(stops_meta):
         moment = departure + timedelta(seconds=SECONDS_PER_STATION * offset)
         slot = time_slot_of(moment)
-        base: Baseline = get_baseline(con, line, name, day_type, slot, direction)
+        base: Baseline = get_baseline(
+            con, line, name, day_type_of(moment), slot, direction
+        )
         sources.add(base.source)
         pct = max(base.congestion_pct * load_factor, 0.0)
         stops.append(

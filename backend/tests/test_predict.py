@@ -451,6 +451,21 @@ class TestSeatTimeline:
         assert timeline.stops[0].time_slot == "08:00"
         assert timeline.stops[-1].time_slot == "08:30"
 
+    def test_day_type_rolls_over_at_midnight(self, con):
+        # 금요일 23:58 승차 — 자정을 넘는 정거장은 토요일 통계를 읽어야 한다.
+        # 요일을 승차 시각으로 고정하면 계속 평일(100)로 나온다.
+        for seq, name in enumerate(["A", "B"], start=1):
+            add_station(con, "5호선", name, seq)
+        add_congestion(con, "5호선", "A", 100.0, slot="23:30", day="평일")
+        add_congestion(con, "5호선", "B", 100.0, slot="00:00", day="평일")
+        add_congestion(con, "5호선", "B", 30.0, slot="00:00", day="토요일")
+        late_friday = datetime(2026, 7, 24, 23, 58)
+        timeline = build_seat_timeline(
+            con, "5호선", "A", "B", departure=late_friday, direction="상선"
+        )
+        assert timeline.stops[0].congestion_pct == 100.0
+        assert timeline.stops[1].congestion_pct == 30.0
+
     def test_load_factor_scales_the_whole_trip(self, con):
         self._line(con, [("A", 100), ("B", 100)])
         halved = build_seat_timeline(
