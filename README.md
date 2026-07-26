@@ -162,9 +162,14 @@ python -m backend.app.etl.capture_snapshots --rounds 20 --interval 30
                                                        # 실시간 스냅샷 녹화 + 위치·도착 로그 수집 (실시간 키 필요)
 python -m backend.app.etl.validate_estimate            # 추정치 vs 공식 통계 오차 측정
 python -m backend.app.etl.calibrate_headway            # 실측 배차간격 vs 기준 상수 대조 (수집 로그 필요)
+python -m backend.app.etl.merge_server_logs 서버.duckdb --snapshots 폴더
+                                                       # 수집 서버 결과를 로컬 DB 에 병합 (멱등)
 
-./.venv/Scripts/python.exe -m pytest                   # 테스트 (329개)
+./.venv/Scripts/python.exe -m pytest                   # 테스트 (337개)
 ```
+
+별도 서버에서 피크 로그를 수집하려면 [docs/SERVER_COLLECTION.md](docs/SERVER_COLLECTION.md) 를 따르세요
+(Rocky Linux 9 기준 · 크론 등록 · API 예산 · 회수/병합 절차).
 
 `capture_snapshots` 는 **유일한 로그 수집기**이기도 합니다. 앱은 DB를 읽기 전용으로만 열기 때문에
 시발 감지·배차간격 캘리브레이션의 원천인 `train_position_log` / `arrival_log` 는 이 스크립트로만 쌓입니다.
