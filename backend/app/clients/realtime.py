@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -186,6 +187,32 @@ def _direction(raw: Any) -> str:
 # barvlDt=0 을 '도착 직전'으로 인정할 수 있는 arvlCd. 0=당역 진입, 1=당역 도착.
 _ETA_ZERO_VALID_CODES = frozenset({"0", "1"})
 
+# arvlMsg2 가 '앞 역'을 가리키는 실측 형태는 두 가지다.
+#   (1) '[5]번째 전역 (남한산성입구)' — 몇 정거장인지까지 알려준다
+#   (2) '전역 진입' / '전역 도착' / '전역 출발' — 바로 앞 역이다
+# 두 형태만 명시적으로 받는다. '전역' 을 통째로 훑으면 '죽전'·'삼전' 같은 역명에
+# '역' 이 붙은 문자열에 걸려 멀쩡한 당역 도착이 미상으로 접힌다.
+# 대괄호와 공백은 원천 표기가 흔들려도 견디도록 선택적으로 둔다.
+_MSG_NTH_PREV_RE = re.compile(r"\[?(\d+)\]?\s*번째\s*전역")
+_MSG_ADJACENT_PREV_RE = re.compile(r"(?:^|[\s\]])전역\s*(?:출발|진입|도착)")
+
+
+def _prev_station_hint(row: dict[str, Any]) -> tuple[bool, int | None]:
+    """(앞 역을 가리키는가, 몇 정거장 앞인가) 를 함께 돌려준다.
+
+    '이 역에 없다'와 '몇 정거장 앞이다'는 다른 질문이다. 거리를 못 읽어도 없다는
+    것은 알 수 있으므로, 두 판정을 각각 다른 정규식으로 따로 두면 서로 어긋나
+    'eta=0 인데 5정거장 전' 같은 자기모순 레코드가 나온다. 한 곳에서만 판단한다.
+    """
+    message = str(row.get("arvlMsg2") or "")
+    nth = _MSG_NTH_PREV_RE.search(message)
+    if nth:
+        # '[0]번째' 는 거리로 쓸 수 없다. 앞 역이라는 사실만 남기고 수는 버린다.
+        return True, int(nth.group(1)) or None
+    if _MSG_ADJACENT_PREV_RE.search(message):
+        return True, 1
+    return False, None
+
 
 def _eta_sec(row: dict[str, Any]) -> int | None:
     """barvlDt(도착까지 남은 초)를 읽는다. 0 은 뜻이 둘이라 arvlCd 로 가른다.
@@ -194,6 +221,11 @@ def _eta_sec(row: dict[str, Any]) -> int | None:
     정보가 없다는 뜻이다. 진짜 0초(도착 직전)는 arvlCd 가 진입/도착일 때뿐이다.
     이 둘을 한 값 0 으로 뭉개면 후보 정렬(0 이 falsy 라 가장 먼 열차 취급),
     배차간격, 캘리브레이션 표본이 전부 오염된다. 모르면 None 으로 정직하게 둔다.
+
+    arvlCd 도 무조건 믿을 수는 없다. 실측: 8호선은 barvlDt 가 항상 0 인데 arvlCd
+    까지 '1'(당역 도착)로 와서, 정작 arvlMsg2 는 '[5]번째 전역'이라고 말한다.
+    코드값만 보면 다섯 정거장 밖 열차를 '지금 도착'으로 내보내게 된다 —
+    실측 10,070행 전부가 이 조합이었다. 코드와 메시지가 어긋나면 메시지를 믿는다.
     """
     raw = row.get("barvlDt")
     text = "" if raw is None else str(raw).strip()
@@ -204,8 +236,21 @@ def _eta_sec(row: dict[str, Any]) -> int | None:
     if eta > 0:
         return eta
     if eta == 0 and str(row.get("arvlCd") or "").strip() in _ETA_ZERO_VALID_CODES:
+        at_previous_station, _ = _prev_station_hint(row)
+        if at_previous_station:
+            return None
         return 0
     return None
+
+
+def _stations_away(row: dict[str, Any]) -> int | None:
+    """arvlMsg2 에서 '몇 정거장 앞인지'를 읽는다. 모르면 None.
+
+    카운트다운이 통째로 없는 노선에서도 이 문구는 살아 있다. ETA 를 미상으로
+    두면 화면이 '—' 뿐이라 아무것도 못 알려주는데, 이 값이 있으면 없는 시간을
+    지어내지 않고도 '몇 정거장 전'까지는 정직하게 말할 수 있다.
+    """
+    return _prev_station_hint(row)[1]
 
 
 def _extract_envelope(payload: dict[str, Any]) -> tuple[str, str]:
@@ -294,6 +339,7 @@ def _normalize_arrival(row: dict[str, Any], now: datetime) -> dict[str, Any]:
         "last_train": str(row.get("lstcarAt") or "") == "1",
         "terminal_station": _terminal_name(row.get("bstatnNm")),
         "eta_sec": _eta_sec(row),
+        "stations_away": _stations_away(row),
         "arrival_message": str(row.get("arvlMsg2") or ""),
         "arrival_code": str(row.get("arvlCd") or ""),
         "reception_dt": reception_dt,

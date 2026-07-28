@@ -169,6 +169,7 @@
     lineStations: [],
     stationName: null,
     dest: '',
+    predictDirection: '',
     heatDirection: '',
     heat: null,
     running: true,
@@ -626,6 +627,10 @@
     S.stationName = null;
     S.dest = '';
     S.heat = null;
+    // 방면은 노선마다 뜻이 다르다(2호선 내·외선 vs 8호선 상·하선).
+    // 이전 노선의 선택을 물고 가면 후보가 통째로 걸러져 빈 화면이 된다.
+    S.predictDirection = '';
+    if (dom.predictDirSelect) dom.predictDirSelect.value = '';
     applyLineTheme(line);
     renderLineChips();
 
@@ -732,10 +737,12 @@
     if (!S.stationName) return Promise.resolve();
     var token = ++S.seq.predict;
 
-    // direction 은 의도적으로 보내지 않는다. 실시간 응답의 방향 표기(상행/하행)와
-    // 예측 API 의 필터 값(상선/하선)이 서로 달라 후보가 통째로 걸러질 수 있다.
+    // direction 은 서버가 normalize_direction 으로 정규화하므로 '상선'/'하선'
+    // 어느 표기로 보내도 안전하다. 비우면 보내지 않고 서버 추론에 맡긴다 —
+    // 그때 응답의 directionInferred 가 true 로 와서 화면에 '자동'으로 표시된다.
     return api('/api/predict/station/' + encodeURIComponent(S.stationName), {
       line: S.line,
+      direction: S.predictDirection || undefined,
       dest: S.dest || undefined
     }).then(function (data) {
       if (token !== S.seq.predict) return;
@@ -768,6 +775,16 @@
       h('span', { class: 'station-head__line', text: data.line }),
       h('h3', { text: data.station }),
       meta && meta.transfer ? h('span', { class: 'badge badge--transfer', text: '환승역' }) : null,
+      // 어느 방면 기준인지 밝힌다. 서버가 방면을 추론한 경우 그 사실까지 말해야
+      // 사용자가 반대 방향 열차를 보고 있는지 판단할 수 있다.
+      data.direction
+        ? h('span', {
+            class: 'badge',
+            title: data.directionInferred
+              ? '방면을 지정하지 않아 가장 먼저 오는 열차의 방면으로 맞췄습니다'
+              : '선택한 방면 기준입니다'
+          }, data.direction + (data.directionInferred ? ' · 자동' : ''))
+        : null,
       h('span', { class: 'station-head__meta num', text: timeText(data.fetchedAt) })
     ));
 
@@ -790,9 +807,12 @@
         return;
       }
       body.appendChild(h('ul', { class: 'arrivals' }, arrivals.map(function (a) {
-        var min = secToMin(a.etaSec);
+        var shown = arrivalDisplay(secToMin(a.etaSec), a.stationsAway);
+        var etaText = shown.kind === 'time' ? shown.value + '분'
+          : shown.kind === 'stations' ? shown.value + '정거장'
+          : '—';
         return h('li', {},
-          h('span', { class: 'arrivals__eta', text: min === null ? '—' : min + '분' }),
+          h('span', { class: 'arrivals__eta', text: etaText }),
           h('span', { class: 'arrivals__dest', text: (a.terminalStation ? a.terminalStation + '행' : '행선지 미상') }),
           a.express ? h('span', { class: 'badge badge--express', text: '급행' }) : null,
           a.direction ? h('span', { class: 'badge', text: a.direction }) : null,
@@ -844,6 +864,40 @@
     });
   }
 
+  // 도착 표시의 우선순위는 여기서만 정한다: 남은 시간 > 남은 정거장 > 모름.
+  // 예측 카드와 도착 목록이 각자 판단하면 한쪽만 고쳐져 같은 열차를 두고
+  // 화면마다 다른 말을 하게 된다 — 이번 8호선 결함이 정확히 그런 어긋남이었다.
+  function arrivalDisplay(min, stationsAway) {
+    if (min !== null && min !== undefined) return { kind: 'time', value: min };
+    if (stationsAway !== null && stationsAway !== undefined) {
+      return { kind: 'stations', value: stationsAway };
+    }
+    return { kind: 'unknown', value: null };
+  }
+
+  function etaBlock(train, min) {
+    var shown = arrivalDisplay(min, train.stationsAway);
+    if (shown.kind === 'time') {
+      return h('div', { class: 'eta' },
+        h('span', { class: 'eta__val', text: String(shown.value) }),
+        h('span', { class: 'eta__unit', text: '분 후 도착' }),
+        train.etaSec !== null && train.etaSec !== undefined
+          ? h('span', { class: 'eta__sec', text: train.etaSec + 's' }) : null
+      );
+    }
+    if (shown.kind === 'stations') {
+      return h('div', { class: 'eta' },
+        h('span', { class: 'eta__val', text: String(shown.value) }),
+        h('span', { class: 'eta__unit', text: '정거장 전' }),
+        h('span', { class: 'eta__sec', text: '도착 시간 미제공' })
+      );
+    }
+    return h('div', { class: 'eta' },
+      h('span', { class: 'eta__val', text: '—' }),
+      h('span', { class: 'eta__unit', text: '도착 시간 미상' })
+    );
+  }
+
   function trainCard(train, label, primary) {
     var grade = train.grade;
     var min = train.etaMin;
@@ -858,12 +912,10 @@
       ),
       h('div', { class: 'train-card__body' },
 
-        h('div', { class: 'eta' },
-          h('span', { class: 'eta__val', text: min === null || min === undefined ? '—' : String(min) }),
-          h('span', { class: 'eta__unit', text: '분 후 도착' }),
-          train.etaSec !== null && train.etaSec !== undefined
-            ? h('span', { class: 'eta__sec', text: train.etaSec + 's' }) : null
-        ),
+        // 카운트다운이 없는 노선(8호선)은 etaMin 이 null 이다. 단위를 '분 후 도착'
+        // 으로 고정해 두면 '— 분 후 도착'이 되어 고장처럼 읽힌다. 시간을 모르면
+        // 아는 것(남은 정거장)을 말하고, 그것도 없으면 모른다고 말한다.
+        etaBlock(train, min),
 
         h('div', { class: 'pct' },
           h('span', { class: 'pct__val', 'data-grade': grade },
@@ -1193,6 +1245,7 @@
     dom.timelineBody = $('#timelineBody');
     dom.heatBody = $('#heatBody');
     dom.dirSelect = $('#dirSelect');
+    dom.predictDirSelect = $('#predictDirSelect');
     dom.refreshToggle = $('#refreshToggle');
     dom.refreshProgress = $('#refreshProgress');
     dom.refreshCount = $('#refreshCount');
@@ -1217,6 +1270,11 @@
     dom.dirSelect.addEventListener('change', function () {
       S.heatDirection = this.value;
       loadHeatmap();
+    });
+
+    dom.predictDirSelect.addEventListener('change', function () {
+      S.predictDirection = this.value;
+      if (S.stationName) loadPrediction();
     });
 
     if (window.matchMedia) {

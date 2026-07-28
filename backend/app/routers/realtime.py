@@ -28,6 +28,7 @@ def _serialize(record: dict) -> dict:
         "terminalStation": record.get("terminal_station"),
         "positionStatus": record.get("position_status"),
         "etaSec": record.get("eta_sec"),
+        "stationsAway": record.get("stations_away"),
         "arrivalMessage": record.get("arrival_message"),
         "receptionDt": reception.isoformat() if reception else None,
         "ageSec": record.get("age_sec"),

@@ -53,7 +53,7 @@ class FakeRealtime:
 
 
 def arrival(train_no, eta_sec, *, line="5호선", direction="상선", express=False,
-            station="강남", terminal="성수"):
+            station="강남", terminal="성수", stations_away=None):
     return {
         "kind": "arrival",
         "train_no": train_no,
@@ -66,6 +66,7 @@ def arrival(train_no, eta_sec, *, line="5호선", direction="상선", express=Fa
         "express": express,
         "terminal_station": terminal,
         "eta_sec": eta_sec,
+        "stations_away": stations_away,
         "arrival_message": f"{eta_sec}초 후",
         "reception_dt": datetime(2026, 7, 21, 8, 15),
         "age_sec": 5.0,
@@ -391,6 +392,65 @@ class TestPredictStation:
         ).json()
         assert body["arrivalCount"] == 1
         assert body["thisTrain"]["trainNo"] == "UP"
+
+    def test_empty_direction_result_explains_the_filter(self, make_client):
+        # 방면 때문에 후보가 0 이 된 것과 애초에 열차가 없는 것은 다르다.
+        # 같은 문구를 쓰면 사용자가 필터를 풀 생각을 못 한다.
+        client = self._client(make_client, [arrival("DOWN", 60, direction="하선")])
+        body = client.get(
+            "/api/predict/station/강남",
+            params={"line": "5호선", "direction": "상선", "at": AT},
+        ).json()
+        assert body["thisTrain"] is None
+        assert "상선" in body["reason"]
+        assert "자동" in body["reason"]
+
+    def test_no_trains_at_all_does_not_blame_the_direction_filter(self, make_client):
+        client = self._client(make_client, [])
+        body = client.get(
+            "/api/predict/station/강남",
+            params={"line": "5호선", "direction": "상선", "at": AT},
+        ).json()
+        assert body["thisTrain"] is None
+        assert "상선 방면" not in body["reason"]
+
+    def test_stations_away_is_exposed_on_predicted_trains(self, make_client):
+        # 카운트다운이 없는 노선(8호선)에서 화면이 '0분'이라 거짓말하지 않으려면
+        # 남은 정거장 수가 응답까지 올라와야 한다.
+        client = self._client(
+            make_client, [arrival("A", None, stations_away=5)]
+        )
+        body = client.get(
+            "/api/predict/station/강남", params={"line": "5호선", "at": AT}
+        ).json()
+        assert body["thisTrain"]["etaSec"] is None
+        assert body["thisTrain"]["etaMin"] is None
+        assert body["thisTrain"]["stationsAway"] == 5
+        assert any("알 수 없" in r for r in body["thisTrain"]["reasons"])
+
+    def test_unknown_eta_orders_by_stations_away(self, make_client):
+        # ETA 가 전부 없으면 정렬이 동률이 되어 '이번/다음'이 응답 순서로 정해진다.
+        # 남은 정거장으로 갈라야 가까운 열차가 '이번'이 된다.
+        client = self._client(
+            make_client,
+            [arrival("FAR", None, stations_away=7), arrival("NEAR", None, stations_away=2)],
+        )
+        body = client.get(
+            "/api/predict/station/강남", params={"line": "5호선", "at": AT}
+        ).json()
+        assert body["thisTrain"]["trainNo"] == "NEAR"
+        assert body["nextTrain"]["trainNo"] == "FAR"
+
+    def test_real_eta_still_outranks_stations_away(self, make_client):
+        # 시간이 있으면 그게 우선이다. 정거장 수가 적다고 앞세우면 안 된다.
+        client = self._client(
+            make_client,
+            [arrival("NO_ETA", None, stations_away=1), arrival("HAS_ETA", 300)],
+        )
+        body = client.get(
+            "/api/predict/station/강남", params={"line": "5호선", "at": AT}
+        ).json()
+        assert body["thisTrain"]["trainNo"] == "HAS_ETA"
 
     def test_other_line_arrivals_are_excluded(self, make_client):
         client = self._client(

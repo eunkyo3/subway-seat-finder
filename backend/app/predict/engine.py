@@ -45,6 +45,8 @@ class TrainPrediction:
     baseline_resolution: str
     headway: HeadwaySignal
     origin: OriginSignal
+    # 카운트다운이 없는 노선(8호선)에서 ETA 대신 남는 유일한 거리 단서.
+    stations_away: int | None = None
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -63,6 +65,7 @@ def predict_train(
     when: datetime,
     train_no: str | None = None,
     eta_sec: int | None = None,
+    stations_away: int | None = None,
     express: bool = False,
     terminal_station: str | None = None,
     direction: str | None = None,
@@ -103,6 +106,13 @@ def predict_train(
         reasons.append("이 역·시간대 통계가 없어 인접 범위 평균을 썼습니다")
     if base.is_estimated and base.source != "none":
         reasons.append("공식 혼잡도 파일이 없어 승하차 기반 추정치를 썼습니다")
+    if eta_sec is None:
+        # 남은 시간을 모르는 것과 0분은 전혀 다르다. 침묵하면 화면이 '—' 하나만
+        # 남아 고장으로 읽히므로, 모른다는 사실과 아는 만큼의 거리를 같이 말한다.
+        reasons.append(
+            "도착 카운트다운이 오지 않아 남은 시간을 알 수 없습니다"
+            + (f" (앞으로 {stations_away}정거장)" if stations_away is not None else "")
+        )
 
     return TrainPrediction(
         train_no=train_no,
@@ -116,6 +126,7 @@ def predict_train(
         baseline_resolution=base.resolution,
         headway=head,
         origin=origin,
+        stations_away=stations_away,
         reasons=reasons,
     )
 

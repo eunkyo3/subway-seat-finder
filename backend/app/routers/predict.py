@@ -33,6 +33,7 @@ def _arrival_payloads(candidates: list[dict]) -> list[dict]:
         {
             "trainNo": r.get("train_no"),
             "etaSec": r.get("eta_sec"),
+            "stationsAway": r.get("stations_away"),
             "express": r.get("express"),
             "terminalStation": r.get("terminal_station"),
             "direction": r.get("direction"),
@@ -46,6 +47,7 @@ def _train_payload(prediction: TrainPrediction) -> dict:
         "trainNo": prediction.train_no,
         "etaSec": prediction.eta_sec,
         "etaMin": None if prediction.eta_sec is None else round(prediction.eta_sec / 60),
+        "stationsAway": prediction.stations_away,
         "express": prediction.express,
         "terminalStation": prediction.terminal_station,
         "baselinePct": prediction.baseline_pct,
@@ -164,17 +166,33 @@ def predict_station(
         raise HTTPException(404, f"{line_norm} 에 '{station}' 역이 없습니다.")
 
     arrival_result = state.realtime.fetch_arrivals(station)
-    candidates = [
+    # 노선 필터와 방면 필터를 나눠 둔다. 방면 때문에 후보가 0 이 된 것인지
+    # 애초에 열차가 없는 것인지 구분해야, 빈 화면에 맞는 사유를 말할 수 있다.
+    on_line = [
         record
         for record in arrival_result.records
         if normalize_line(record.get("line")) == line_norm
-        and (not direction_norm or record.get("direction") == direction_norm)
+    ]
+    candidates = [
+        record
+        for record in on_line
+        if not direction_norm or record.get("direction") == direction_norm
     ]
     # eta 0(도착 직전)은 가장 가까운 열차다. `or 10**9` 식으로 접으면 0 이
     # falsy 라 가장 먼 열차로 밀리므로, None(미상)만 명시적으로 뒤로 보낸다.
-    candidates.sort(
-        key=lambda r: r["eta_sec"] if r.get("eta_sec") is not None else float("inf")
-    )
+    #
+    # ETA 가 통째로 없는 노선(8호선)은 이 정렬만으로는 전부 동률이라 '이번/다음'이
+    # 원본 응답 순서로 결정돼 버린다. 그럴 때는 남은 정거장 수로 가른다 —
+    # 시간은 몰라도 어느 쪽이 더 가까운지는 알 수 있다.
+    def _arrival_order(record: dict) -> tuple[float | int, float | int]:
+        eta = record.get("eta_sec")
+        away = record.get("stations_away")
+        return (
+            eta if eta is not None else float("inf"),
+            away if away is not None else float("inf"),
+        )
+
+    candidates.sort(key=_arrival_order)
 
     # 방향을 안 주면 가장 먼저 오는 열차의 방향으로 맞춘다.
     # 이걸 안 하면 상행 열차와 하행 열차를 비교해 "다음 열차가 더 여유롭다"고
@@ -200,15 +218,25 @@ def predict_station(
 
     if not is_predictable(line_norm):
         # 9호선·광역철도는 혼잡도 통계 자체가 없다. 도착 정보만 정직하게 준다.
-        response["reason"] = (
+        reason = (
             f"{line_norm} 은 공개된 혼잡도 통계가 없어 예측하지 않습니다. "
             "도착 정보만 제공합니다."
         )
+        # 여기서도 방면 필터가 목록을 비웠을 수 있다. 통계 부재만 말하면
+        # 사용자는 자기가 건 필터 때문이라는 걸 알 길이 없다.
+        if not candidates and direction_norm and on_line:
+            reason += f" 그리고 {direction_norm} 방면으로 오는 열차가 지금은 없습니다."
+        response["reason"] = reason
         response["arrivals"] = _arrival_payloads(candidates)
         return response
 
     if not candidates:
-        response["reason"] = "지금 이 역으로 오는 열차 정보가 없습니다."
+        response["reason"] = (
+            f"{direction_norm} 방면으로 오는 열차가 지금은 없습니다."
+            " 방면을 '자동'으로 두면 가장 먼저 오는 열차를 봅니다."
+            if direction_norm and on_line
+            else "지금 이 역으로 오는 열차 정보가 없습니다."
+        )
         response["thisTrain"] = None
         response["nextTrain"] = None
         return response
@@ -228,6 +256,7 @@ def predict_station(
                 when=now,
                 train_no=train_no,
                 eta_sec=record.get("eta_sec"),
+                stations_away=record.get("stations_away"),
                 express=bool(record.get("express")),
                 terminal_station=record.get("terminal_station"),
                 direction=effective_direction or record.get("direction"),

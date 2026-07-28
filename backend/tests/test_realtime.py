@@ -117,6 +117,14 @@ def arrival_payload_with(**overrides) -> dict:
     return payload
 
 
+def first_arrival_record(tmp_path, **overrides):
+    """필드를 덮어쓴 도착 응답 한 건을 정규화 결과로 돌려준다. 없으면 None."""
+    handler = CallCounter(arrival_payload_with(**overrides))
+    with make_client(make_settings(tmp_path), handler) as client:
+        records = client.fetch_arrivals("강남").records
+    return records[0] if records else None
+
+
 def make_settings(tmp_path: Path, *, key: str | None = "RT-KEY", ttl: int = 30) -> Settings:
     return Settings(
         api_key="GENERAL-KEY",
@@ -541,29 +549,87 @@ class TestArrivalEtaDisambiguation:
     59%가 0). arvlCd 로 갈라 미상은 None 으로 둬야 후보 정렬(0 은 falsy)·
     배차간격·캘리브레이션 표본이 오염되지 않는다."""
 
-    def _record(self, tmp_path, **overrides):
-        handler = CallCounter(arrival_payload_with(**overrides))
-        with make_client(make_settings(tmp_path), handler) as client:
-            records = client.fetch_arrivals("강남").records
-        return records[0] if records else None
-
     def test_zero_with_countdown_unknown_code_is_none(self, tmp_path):
-        record = self._record(tmp_path, barvlDt="0", arvlCd="99")
+        record = first_arrival_record(tmp_path, barvlDt="0", arvlCd="99")
         assert record["eta_sec"] is None
 
     def test_zero_while_arriving_is_genuine_zero(self, tmp_path):
-        record = self._record(tmp_path, barvlDt="0", arvlCd="1")
+        # arvlMsg2 도 당역을 가리켜야 진짜 0초다. 기본 픽스처의 '전역 출발' 을
+        # 그대로 두면 코드와 메시지가 어긋난 payload 가 되어 의도가 흐려진다.
+        # 실측 문구는 '당역'이 아니라 역명 그대로다 — statnNm 이 '강남'이므로 '강남 도착'.
+        record = first_arrival_record(tmp_path, barvlDt="0", arvlCd="1", arvlMsg2="강남 도착")
         assert record["eta_sec"] == 0
 
     def test_numeric_zero_while_approaching_is_genuine_zero(self, tmp_path):
         # 스냅샷을 손으로 만들면 barvlDt 가 숫자 0 으로 올 수 있다.
         # falsy 라고 결측 취급하면 도착 직전 열차가 사라진다.
-        record = self._record(tmp_path, barvlDt=0, arvlCd="0")
+        record = first_arrival_record(tmp_path, barvlDt=0, arvlCd="0", arvlMsg2="강남 진입")
         assert record["eta_sec"] == 0
 
     def test_missing_barvlDt_is_none(self, tmp_path):
-        record = self._record(tmp_path, barvlDt="", arvlCd="3")
+        record = first_arrival_record(tmp_path, barvlDt="", arvlCd="3")
         assert record["eta_sec"] is None
+
+
+class TestArrivalCodeContradictsMessage:
+    """실측: 8호선은 barvlDt 가 항상 0 인데 arvlCd 까지 '1'(당역 도착)로 오고,
+    정작 arvlMsg2 는 '[5]번째 전역' 이라고 말한다. 코드값만 믿으면 다섯 정거장
+    밖 열차가 '지금 도착'으로 나간다 — 하루치 10,070행 전부가 이 조합이었다.
+    코드와 메시지가 어긋나면 메시지를 믿는다."""
+
+    def test_nth_previous_station_beats_arrival_code(self, tmp_path):
+        record = first_arrival_record(
+            tmp_path, barvlDt="0", arvlCd="1",
+            arvlMsg2="[5]번째 전역 (남한산성입구(성남법원,검찰청))",
+        )
+        assert record["eta_sec"] is None
+        assert record["stations_away"] == 5
+
+    def test_previous_station_entry_beats_arrival_code(self, tmp_path):
+        record = first_arrival_record(tmp_path, barvlDt="0", arvlCd="1", arvlMsg2="전역 진입")
+        assert record["eta_sec"] is None
+        assert record["stations_away"] == 1
+
+    def test_real_countdown_is_never_overridden_by_message(self, tmp_path):
+        # 메시지가 전역을 가리켜도 초 단위 카운트다운이 있으면 그게 사실이다.
+        # 나이 보정이 걸리므로 상수를 박지 않고, 메시지만 다른 같은 payload 와
+        # 견줘 '메시지가 값을 바꾸지 않는다'는 것만 확인한다.
+        prev = first_arrival_record(tmp_path, barvlDt="120", arvlCd="5", arvlMsg2="전역 도착")
+        neutral = first_arrival_record(tmp_path, barvlDt="120", arvlCd="99", arvlMsg2="2분 후")
+        assert prev["eta_sec"] == neutral["eta_sec"]
+        assert prev["eta_sec"] > 0
+
+    def test_spacing_variants_never_produce_contradictory_records(self, tmp_path):
+        # 판정과 거리 계산을 각각 다른 정규식으로 두면 서로 어긋난다.
+        # '[5]번째전역'(공백 없음)에서 한쪽만 매치되면 eta=0 인데 5정거장 전이라는
+        # 자기모순 레코드가 나가고, 화면은 다시 '0분 후 도착'을 찍는다.
+        for message in (
+            "[5]번째 전역 (석촌)",
+            "[5]번째전역 (석촌)",
+            "5번째 전역 (석촌)",
+        ):
+            record = first_arrival_record(tmp_path, barvlDt="0", arvlCd="1", arvlMsg2=message)
+            assert record["eta_sec"] is None, message
+            assert record["stations_away"] == 5, message
+
+    def test_zeroth_previous_station_yields_no_fabricated_distance(self, tmp_path):
+        # '[0]번째' 는 거리로 쓸 수 없다. 0정거장 전이라고 우기면 안 된다.
+        record = first_arrival_record(tmp_path, barvlDt="0", arvlCd="1", arvlMsg2="[0]번째 전역 (석촌)")
+        assert record["eta_sec"] is None
+        assert record["stations_away"] is None
+
+    def test_station_name_ending_in_jeon_is_not_mistaken_for_prev_station(self, tmp_path):
+        # '죽전'은 실재하는 역이고 '죽전역 도착'은 '전역' 바로 뒤에 '도착'이 붙는다.
+        # 접미사 조건만으로는 못 막고 앞자리 앵커((?:^|[\s\]]))가 있어야만 걸러진다 —
+        # 앵커를 빼면 이 케이스에서 멀쩡한 도착이 미상으로 접힌다.
+        record = first_arrival_record(tmp_path, barvlDt="0", arvlCd="1", arvlMsg2="죽전역 도착")
+        assert record["eta_sec"] == 0
+        assert record["stations_away"] is None
+
+    def test_stations_away_is_always_present_on_arrival_records(self, tmp_path):
+        record = first_arrival_record(tmp_path, barvlDt="90", arvlCd="99", arvlMsg2="1분 후")
+        assert "stations_away" in record
+        assert record["stations_away"] is None
 
 
 class TestStaleArrivalGhosts:
