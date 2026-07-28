@@ -89,12 +89,23 @@ cp .env.example .env    # 그리고 값을 채웁니다
 > 원본 파일은 용량 때문에 **저장소에 넣지 않았습니다**(`.gitignore`). 아래 링크에서 직접 받으세요.
 > 없어도 앱은 승하차 기반 추정치로 동작합니다.
 
+**가장 빠른 방법** — 2025-03 ~ 2026-03 분기 파일 5개를 묶은
+[`subway-raw-data.zip`](https://github.com/eunkyo3/subway-seat-finder/releases/download/data-snapshot-20260723/subway-raw-data.zip)
+(1.4MB, [릴리즈](https://github.com/eunkyo3/subway-seat-finder/releases/tag/data-snapshot-20260723))
+를 받아 `data/raw/` 에 풀면 아래 표의 ⭐핵심 항목이 해결됩니다.
+
+원본에서 직접 받으려면:
+
 | 데이터 | 링크 | 두는 곳 |
 |---|---|---|
 | **지하철 혼잡도 (OA-12928)** ⭐핵심 | https://data.seoul.go.kr/dataList/OA-12928/F/1/datasetView.do | `data/raw/` |
 | 역별 시간대별 승하차 (OA-12921) *선택* | https://data.seoul.go.kr/dataList/OA-12921/F/1/datasetView.do | `data/raw/` |
 
 파일을 `data/raw/` 에 넣고 배치를 다시 실행하면 됩니다.
+
+> ⚠️ **하위 폴더 없이 `data/raw/` 바로 아래**에 두세요. 로더가 이 폴더를 비재귀로만
+> 훑기 때문에(`load_congestion.find_congestion_files`), 폴더째 넣으면 파일을 못 찾고
+> 아무 오류 없이 추정치 경로로 넘어갑니다.
 
 > ⚠️ **DuckDB는 쓰기 연결이 하나뿐입니다.** 앱이 떠 있는 채로 배치를 돌리면 실패합니다.
 > ```bash
