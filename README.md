@@ -301,7 +301,8 @@ backend/app/
 │   ├── run_all.py         배치 진입점
 │   ├── capture_snapshots.py  실시간 녹화 (시연 안전망) + 위치·도착 로그 수집
 │   ├── validate_estimate.py  추정치 vs 공식 통계 오차 측정
-│   └── calibrate_headway.py  실측 배차간격 vs 기준 상수 대조
+│   ├── calibrate_headway.py  실측 배차간격 vs 기준 상수 대조
+│   └── merge_server_logs.py  수집 서버 로그를 로컬 DB 로 병합 (멱등)
 ├── predict/
 │   ├── baseline.py        기준 혼잡도 + 폴백 계단
 │   ├── signals.py         배차간격 · 시발 감지
@@ -310,7 +311,12 @@ backend/app/
 └── routers/               stations · realtime · predict
 
 frontend/                  Leaflet 대시보드 (번들러 없음, Leaflet은 vendor/에 내장)
-tools/                     운영 스크립트 (피크 시간대 스냅샷 재녹화)
+tools/
+├── record_peak_snapshots.ps1   피크 시간대 스냅샷 재녹화 (로컬)
+└── server/                     수집 서버용 (Rocky Linux 9)
+    ├── collect_peak.sh         피크 로그 수집 + API 예산 가드
+    └── install_cron.sh         평일 07:00 / 18:00 크론 등록·해제 (멱등)
+docs/SERVER_COLLECTION.md  수집 서버 구축 · 회수 · 병합 절차
 data/raw/                  ← 혼잡도 엑셀을 여기에
 data/snapshots/            ← 녹화된 실시간 스냅샷
 ```
