@@ -2,11 +2,13 @@
 
     python -m backend.app.etl.calibrate_headway [--day-type 평일] [--json 경로]
 
-NOMINAL_HEADWAY_MIN(시간대별 기준 배차간격)은 공개 시각표에서 정성적으로 뽑은
-값이고 노선 구분이 없다. 2호선과 8호선의 배차가 같을 리 없으므로, 수집된
-arrival_log 에서 실측 간격 분포를 뽑아 **노선×시간대** 중앙값과 현재 상수의
-편차를 보고한다. 표본이 충분한 셀만 제안으로 인정한다 — 몇 개 관측의 중앙값을
-상수로 승격하면 캘리브레이션이 아니라 노이즈 이식이다.
+수집된 arrival_log 에서 실측 간격 분포를 뽑아 **노선×시간대** 중앙값과 엔진이
+실제로 쓰는 기준값의 편차를 보고한다. 표본이 충분한 셀만 제안으로 인정한다 —
+몇 개 관측의 중앙값을 상수로 승격하면 캘리브레이션이 아니라 노이즈 이식이다.
+
+기준값은 NOMINAL_HEADWAY_MIN_BY_LINE(노선별 실측)이 우선하고, 없으면
+NOMINAL_HEADWAY_MIN(노선 구분 없는 정성값)으로 폴백한다. 그래서 이 표에서
+편차가 남아 있는 셀이 곧 '아직 반영 안 된 (노선, 시간대)' 목록이다.
 
 HEADWAY_SENSITIVITY(간격→혼잡 민감도)는 이 데이터로 적합하지 않는다.
 열차별 혼잡 실측이 없고, 시간대를 가로지르는 간격-혼잡 상관은 수요가
@@ -29,7 +31,7 @@ from statistics import median
 from ..config import load_settings
 from ..db import connect
 from ..naming import line_from_subway_id
-from ..predict.signals import DEFAULT_NOMINAL_HEADWAY_MIN, NOMINAL_HEADWAY_MIN
+from ..predict.signals import nominal_headway_sec
 
 logger = logging.getLogger("calibrate")
 
@@ -41,6 +43,10 @@ MAX_HEADWAY_SEC = 3600.0
 
 # 셀당 최소 표본. 이 밑이면 중앙값이 우연에 좌우된다.
 MIN_SAMPLES = 30
+
+# 이 이내면 '상수에 이미 반영됨'으로 본다. 상수는 소수 둘째 자리까지만 담고
+# 보고는 소수 첫째 자리로 반올림하므로, 반영된 셀도 편차가 정확히 0 이 아니다.
+REFLECTED_PCT = 1.0
 
 
 def extract_headways(con, day_type: str) -> list[tuple[str, int, float]]:
@@ -109,7 +115,9 @@ def summarize(
     out = []
     for (line, hour), gaps in sorted(cells.items()):
         observed_min = median(gaps) / 60.0
-        nominal_min = NOMINAL_HEADWAY_MIN.get(hour, DEFAULT_NOMINAL_HEADWAY_MIN)
+        # 엔진이 실제로 쓰는 값과 대조한다 — 노선별 상수가 반영된 셀은 편차가 0 에
+        # 수렴하고, 폴백 중인 셀만 편차가 남는다. 즉 이 표가 곧 미반영 목록이다.
+        nominal_min = nominal_headway_sec(hour, line) / 60.0
         out.append(
             {
                 "line": line,
@@ -154,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     # 이 문자를 인코딩하지 못해 로깅 핸들러가 트레이스백을 뱉는다. 도커는 PYTHONUTF8=1 이라 무관.
     logger.info("셀당 최소 표본 %d개. 미달 셀은 '표본부족'으로 표시하고 제안에서 제외한다.", args.min_samples)
     logger.info("")
-    logger.info("[노선×시간대 실측 중앙값 vs NOMINAL_HEADWAY_MIN]")
+    logger.info("[노선×시간대 실측 중앙값 vs 엔진이 쓰는 기준값]")
     logger.info("  노선    시간   n     실측(분)  기준(분)  편차")
     for c in cells:
         logger.info(
@@ -172,11 +180,22 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         worst = max(sufficient, key=lambda c: abs(c["deviationPct"]))
-        logger.info(
-            "  표본 충분 셀 %d개. 최대 편차는 %s %d시 %+.1f%%. 노선 구분 없는 현재"
-            " 상수의 한계가 수치로 드러난 곳부터 노선별 값으로 나누는 것이 첫 개선이다.",
-            len(sufficient), worst["line"], worst["hour"], worst["deviationPct"],
-        )
+        stale = [c for c in sufficient if abs(c["deviationPct"]) > REFLECTED_PCT]
+        if not stale:
+            logger.info(
+                "  표본 충분 셀 %d개가 모두 편차 %.1f%% 이내다 — 실측이 이미 상수에"
+                " 반영돼 있다.\n  남은 편차는 표본부족 셀뿐이고, 그건 폴백 기준값과의"
+                " 차이라 반영 대상이 아니다.",
+                len(sufficient), REFLECTED_PCT,
+            )
+        else:
+            logger.info(
+                "  표본 충분 셀 %d개 중 %d개가 상수와 어긋난다. 최대 편차는 %s %d시"
+                " %+.1f%%.\n  이 셀들을 NOMINAL_HEADWAY_MIN_BY_LINE 에 올리는 것이"
+                " 다음 개선이다.",
+                len(sufficient), len(stale),
+                worst["line"], worst["hour"], worst["deviationPct"],
+            )
     logger.info(
         "  HEADWAY_SENSITIVITY 는 이 데이터로 적합하지 않았다. 열차별 혼잡 실측이"
         " 없고,\n  시간대 간 간격-혼잡 상관은 수요가 교란변수라 부호가 반대로 나온다"

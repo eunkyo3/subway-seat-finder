@@ -12,14 +12,39 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from ..naming import normalize_line
+
 # 시간대별 기준 배차간격(분). 실측 간격을 이 값과 비교해 상대적으로 얼마나
 # 벌어졌는지 본다. 절대 간격이 아니라 '평소보다 벌어졌는가'가 혼잡을 만든다.
+#
+# 노선 구분이 없는 정성값이라 아래 NOMINAL_HEADWAY_MIN_BY_LINE 이 우선한다.
+# 실측 대조 결과 이 표는 사실상 2호선 시각표였다 — 2호선은 오차 1~13%로 맞았지만
+# 배차가 성긴 5·6·7·9호선은 60~79% 벗어났다.
 NOMINAL_HEADWAY_MIN = {
     5: 8.0, 6: 5.0, 7: 2.8, 8: 2.5, 9: 3.5, 10: 5.0, 11: 5.0,
     12: 5.0, 13: 5.0, 14: 5.0, 15: 4.6, 16: 4.0, 17: 3.0, 18: 2.5,
     19: 3.0, 20: 4.3, 21: 4.6, 22: 5.0, 23: 6.7, 0: 10.0,
 }
 DEFAULT_NOMINAL_HEADWAY_MIN = 6.0
+
+# 노선×시간대 실측 기준 배차간격(분). calibrate_headway 가 arrival_log 에서 뽑은
+# 중앙값이며, 셀당 표본 30개(MIN_SAMPLES) 이상인 셀만 올렸다. 몇 개 관측의
+# 중앙값을 상수로 승격하면 캘리브레이션이 아니라 노이즈 이식이다.
+#
+# 출처: 2026-07-27~28 평일 수집, 유효 표본 18,421개 / 충분 셀 33개.
+# 커버되지 않은 (노선, 시간대)는 NOMINAL_HEADWAY_MIN 으로 폴백한다 —
+# 아침 피크(7~9시)와 저녁 일부(20시)만 측정됐고 낮 시간대·주말은 아직 비어 있다.
+NOMINAL_HEADWAY_MIN_BY_LINE: dict[str, dict[int, float]] = {
+    "1호선": {7: 4.00, 8: 2.50},
+    "2호선": {7: 2.83, 8: 2.17, 9: 2.33, 20: 4.00},
+    "3호선": {7: 4.50, 8: 3.50, 9: 4.00, 20: 5.00},
+    "4호선": {7: 3.50, 8: 3.00, 9: 3.50, 20: 3.50},
+    "5호선": {7: 5.00, 8: 3.00, 9: 4.00, 20: 6.00},
+    "6호선": {7: 5.00, 8: 4.00, 9: 5.00, 20: 7.00},
+    "7호선": {7: 5.00, 8: 4.00, 9: 4.00, 20: 6.00},
+    "9호선": {7: 4.67, 8: 4.42, 9: 5.17, 20: 6.46},
+    "우이신설선": {7: 2.88, 8: 2.88, 9: 2.88},
+}
 
 # 승객 누적은 간격에 비례하지만 완전 비례는 아니다. 간격이 2배여도 혼잡이 2배가
 # 되진 않는다(일부는 다음 열차를 기다리거나 다른 경로를 택한다).
@@ -39,13 +64,24 @@ class HeadwaySignal:
     available: bool
 
 
-def nominal_headway_sec(hour: int) -> float:
+def nominal_headway_sec(hour: int, line: str | None = None) -> float:
+    """기준 배차간격(초).
+
+    노선별 실측값이 있으면 그것을 쓰고, 없으면 노선 구분 없는 시간대 기본값으로
+    폴백한다. 노선을 모르는 호출부(과거 시그니처)도 그대로 동작한다.
+    """
+    if line:
+        by_hour = NOMINAL_HEADWAY_MIN_BY_LINE.get(normalize_line(line))
+        if by_hour is not None and hour in by_hour:
+            return by_hour[hour] * 60.0
     return NOMINAL_HEADWAY_MIN.get(hour, DEFAULT_NOMINAL_HEADWAY_MIN) * 60.0
 
 
-def headway_factor(headway_sec: float | None, hour: int) -> HeadwaySignal:
+def headway_factor(
+    headway_sec: float | None, hour: int, line: str | None = None
+) -> HeadwaySignal:
     """배차간격 보정계수. 간격이 길수록 단조 증가한다."""
-    nominal = nominal_headway_sec(hour)
+    nominal = nominal_headway_sec(hour, line)
     if headway_sec is None or headway_sec <= 0:
         # 앞 열차를 못 봤으면 보정하지 않는다. 1.0 은 '모름'이지 '정상'이 아니다.
         return HeadwaySignal(None, nominal, 1.0, available=False)

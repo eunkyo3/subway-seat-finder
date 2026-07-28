@@ -75,7 +75,7 @@ def predict_train(
     slot = time_slot_of(when)
     base: Baseline = get_baseline(con, line, station, day_type, slot, direction)
 
-    head = headway_factor(headway_sec, when.hour)
+    head = headway_factor(headway_sec, when.hour, line)
     origin = origin_factor(stations_since_origin, is_mid_line_origin=is_mid_line_origin)
 
     expected = base.congestion_pct * head.factor * origin.factor

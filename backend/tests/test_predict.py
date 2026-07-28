@@ -167,6 +167,29 @@ class TestHeadwaySignal:
     def test_peak_hour_has_tighter_nominal_headway_than_midday(self):
         assert nominal_headway_sec(8) < nominal_headway_sec(14)
 
+    def test_line_specific_nominal_overrides_the_generic_table(self):
+        # 실측 대조에서 드러난 핵심: 노선 구분 없는 표는 사실상 2호선 시각표라
+        # 배차가 성긴 노선일수록 크게 어긋난다. 노선을 주면 그 값이 이겨야 한다.
+        assert nominal_headway_sec(7, "5호선") > nominal_headway_sec(7)
+        assert nominal_headway_sec(7, "5호선") != nominal_headway_sec(7, "2호선")
+
+    def test_unmeasured_line_or_hour_falls_back_to_the_generic_table(self):
+        generic_14 = nominal_headway_sec(14)
+        assert nominal_headway_sec(14, "5호선") == generic_14   # 낮 시간대는 미측정
+        assert nominal_headway_sec(8, "8호선") == nominal_headway_sec(8)  # 미측정 노선
+        assert nominal_headway_sec(8, "없는노선") == nominal_headway_sec(8)
+
+    def test_line_name_is_normalized_before_lookup(self):
+        assert nominal_headway_sec(7, "05호선") == nominal_headway_sec(7, "5호선")
+
+    def test_line_specific_nominal_changes_the_factor(self):
+        # 같은 실측 간격이라도 노선에 따라 보정계수가 달라야 한다. 5호선 7시 기준은
+        # 5.0분이라 5분 간격이 '평소대로'지만, 노선 없이 보면 2.8분 기준이라
+        # '벌어졌다'로 잘못 읽힌다 — 과대예측의 원인이었던 그 차이다.
+        five_min = 5 * 60.0
+        assert headway_factor(five_min, 7, "5호선").factor == pytest.approx(1.0)
+        assert headway_factor(five_min, 7).factor > 1.0
+
 
 class TestComputeHeadway:
     def test_gap_to_preceding_train(self):
@@ -260,12 +283,13 @@ class TestIsPredictable:
 class TestPredictTrain:
     def test_signals_multiply_onto_the_baseline(self, con):
         add_congestion(con, "2호선", "강남", 100.0)
-        nominal = nominal_headway_sec(8)
+        # 기준 배차는 노선별이므로 엔진이 쓸 노선을 그대로 넘겨 기대값을 만든다.
+        nominal = nominal_headway_sec(8, "2호선")
         prediction = predict_train(
             con, line="2호선", station="강남", when=MORNING, direction="상선",
             headway_sec=nominal * 2, stations_since_origin=0, is_mid_line_origin=True,
         )
-        expected = 100.0 * headway_factor(nominal * 2, 8).factor * ORIGIN_EMPTY_FACTOR
+        expected = 100.0 * headway_factor(nominal * 2, 8, "2호선").factor * ORIGIN_EMPTY_FACTOR
         assert prediction.expected_pct == pytest.approx(round(expected, 1))
 
     def test_no_signals_means_expected_equals_baseline(self, con):
@@ -291,7 +315,7 @@ class TestPredictTrain:
         add_congestion(con, "2호선", "강남", 100.0)
         prediction = predict_train(
             con, line="2호선", station="강남", when=MORNING, direction="상선",
-            headway_sec=nominal_headway_sec(8) * 2,
+            headway_sec=nominal_headway_sec(8, "2호선") * 2,
             stations_since_origin=1, is_mid_line_origin=True,
         )
         joined = " ".join(prediction.reasons)

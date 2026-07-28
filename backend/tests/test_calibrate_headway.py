@@ -17,6 +17,7 @@ from backend.app.config import Settings
 from backend.app.db import init_schema
 from backend.app.etl import calibrate_headway
 from backend.app.etl.calibrate_headway import extract_headways, summarize
+from backend.app.predict.signals import nominal_headway_sec
 
 # 2026-07-22 은 수요일(평일), 2026-07-25 은 토요일.
 WEEKDAY = datetime(2026, 7, 22, 8, 0, 0)
@@ -141,16 +142,28 @@ class TestExtractHeadways:
 
 class TestSummarize:
     def test_deviation_against_nominal(self):
-        # 8시 기준 배차는 2.5분. 실측 중앙값이 150초(2.5분)면 편차 0이다.
-        samples = [("2호선", 8, 150.0)] * 30
+        # 편차 0의 정의: 실측 중앙값이 '엔진이 그 노선·시간대에 쓰는 기준값'과 같을 때.
+        # 기준값을 상수로 박지 않고 조회해 쓴다 — 캘리브레이션으로 상수가 갱신돼도
+        # 이 테스트가 검증하려는 관계(같으면 0%)는 그대로여야 하기 때문이다.
+        nominal_sec = nominal_headway_sec(8, "2호선")
+        samples = [("2호선", 8, nominal_sec)] * 30
 
         (cell,) = summarize(samples)
 
         assert cell["n"] == 30
-        assert cell["observedMedianMin"] == 2.5
-        assert cell["nominalMin"] == 2.5
+        assert cell["observedMedianMin"] == pytest.approx(nominal_sec / 60.0, abs=0.005)
+        assert cell["nominalMin"] == pytest.approx(nominal_sec / 60.0)
         assert cell["deviationPct"] == 0.0
         assert cell["sufficient"] is True
+
+    def test_nominal_comes_from_the_line_specific_table(self):
+        # 노선별 실측 상수가 있는 노선과 폴백 노선이 서로 다른 기준값을 받아야 한다.
+        # 둘이 같아지면 노선 구분이 실질적으로 사라진 것이다.
+        (calibrated,) = summarize([("2호선", 8, 150.0)] * 30)
+        (fallback,) = summarize([("8호선", 8, 150.0)] * 30)
+
+        assert calibrated["nominalMin"] != fallback["nominalMin"]
+        assert fallback["nominalMin"] == pytest.approx(nominal_headway_sec(8) / 60.0)
 
     def test_small_cell_marked_insufficient(self):
         samples = [("2호선", 8, 150.0)] * 29
@@ -195,14 +208,15 @@ class TestMain:
         assert rc == 0
         document = json.loads(out.read_text(encoding="utf-8"))
         assert document["dayType"] == "평일"
+        nominal_min = nominal_headway_sec(8, "2호선") / 60.0
         assert document["cells"] == [
             {
                 "line": "2호선",
                 "hour": 8,
                 "n": 1,
                 "observedMedianMin": 5.0,
-                "nominalMin": 2.5,
-                "deviationPct": 100.0,
+                "nominalMin": pytest.approx(nominal_min),
+                "deviationPct": round((5.0 / nominal_min - 1.0) * 100, 1),
                 "sufficient": True,
             }
         ]
